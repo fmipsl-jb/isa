@@ -11,9 +11,9 @@ from openai import APIConnectionError, APIError, OpenAI
 
 
 DEFAULT_MODELS = [
-    "gpt-4.1",
-    "gpt-4.1-mini",
     "gpt-4.1-nano",
+    "gpt-4.1-mini",
+    "gpt-4.1",
     "gpt-4o",
     "gpt-4o-mini",
     "gpt-5",
@@ -227,8 +227,8 @@ def render_sidebar() -> Dict[str, Any]:
 
     models = st.sidebar.multiselect(
         "Models to query",
-        options=DEFAULT_MODELS[:2],
-        default=DEFAULT_MODELS[:3],
+        options=DEFAULT_MODELS,
+        default=DEFAULT_MODELS[:2],
         max_selections=2,
         help="Select up to two models to compare responses side-by-side.",
     )
