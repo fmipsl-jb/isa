@@ -102,8 +102,9 @@ def load_default_user_prompt() -> str:
 
 
 def model_supports_reasoning_and_verbosity(model: str) -> bool:
-    normalized = model.lower()
-    return not normalized.startswith("gpt-4o")
+    """Return True when the model accepts reasoning and verbosity parameters."""
+    normalized = model.lower().strip()
+    return normalized.startswith("gpt-5")
 
 
 def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
@@ -112,14 +113,18 @@ def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
     params: Dict[str, Any] = {
         "model": config.model,
         "input": input_messages,
-        "temperature": config.temperature,
-        "top_p": config.top_p,
-        "text": prepare_text_config(config.verbosity if supports_reasoning_and_verbosity else None),
+        "text": prepare_text_config(
+            config.verbosity if supports_reasoning_and_verbosity else None
+        ),
         "store": True,
     }
 
-    if supports_reasoning_and_verbosity and config.reasoning_effort and config.reasoning_effort != "default":
-        params["reasoning"] = {"effort": config.reasoning_effort}
+    if supports_reasoning_and_verbosity:
+        if config.reasoning_effort and config.reasoning_effort != "default":
+            params["reasoning"] = {"effort": config.reasoning_effort}
+    else:
+        params["temperature"] = config.temperature
+        params["top_p"] = config.top_p
 
     response = client.responses.create(**params)
     return response.to_dict()
