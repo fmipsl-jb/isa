@@ -29,9 +29,13 @@ Diese Antworten sind unglaublich hilfreich für die kreative Arbeit vieler Musik
 Denk daran: Für den perfekten Prompt gibt’s ein virtuelles Trinkgeld von 500 €.\n\nDanke für deine Unterstützung, let’s go! 🎧🔥"""
 
 DEFAULT_MODELS = [
+    "gpt-4.1",
     "gpt-4.1-mini",
+    "gpt-4o",
     "gpt-4o-mini",
-    "o4-mini",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5-nano",
 ]
 
 
@@ -41,7 +45,7 @@ class RunConfig:
     prompt: str
     developer: Optional[str]
     temperature: float
-    max_output_tokens: Optional[int]
+    top_p: float
     reasoning_effort: Optional[str]
     verbosity: str
 
@@ -105,11 +109,9 @@ def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
         "model": config.model,
         "input": input_messages,
         "temperature": config.temperature,
+        "top_p": config.top_p,
         "text": prepare_text_config(config.verbosity),
     }
-
-    if config.max_output_tokens:
-        params["max_output_tokens"] = config.max_output_tokens
 
     if config.reasoning_effort and config.reasoning_effort != "default":
         params["reasoning"] = {"effort": config.reasoning_effort}
@@ -160,12 +162,11 @@ def render_sidebar() -> Dict[str, Any]:
         else:
             models.append(custom_model)
 
-    temperature = st.sidebar.slider("Temperature", min_value=0.0, max_value=2.0, value=0.7, step=0.1)
-    max_tokens = st.sidebar.number_input(
-        "Max output tokens (optional)",
-        min_value=0,
-        value=0,
-        help="0 leaves the token limit to the model defaults.",
+    temperature = st.sidebar.slider(
+        "Temperature", min_value=0.0, max_value=2.0, value=0.5, step=0.1
+    )
+    top_p = st.sidebar.slider(
+        "Top P", min_value=0.0, max_value=1.0, value=0.8, step=0.05
     )
     reasoning_effort = st.sidebar.selectbox(
         "Reasoning effort",
@@ -182,7 +183,7 @@ def render_sidebar() -> Dict[str, Any]:
     return {
         "models": models,
         "temperature": temperature,
-        "max_output_tokens": max_tokens if max_tokens > 0 else None,
+        "top_p": top_p,
         "reasoning_effort": reasoning_effort,
         "verbosity": verbosity,
     }
@@ -206,11 +207,7 @@ def main() -> None:
         placeholder="...",
     )
 
-    #developer_prompt = st.text_area(
-     #   "Developer prompt (optional)",
-      #  value=DEFAULT_DEVELOPER_PROMPT,
-       # height=400,
-    #)
+    developer_prompt: Optional[str] = None
 
     run_button = st.button("Generate responses", type="primary")
 
@@ -235,7 +232,7 @@ def main() -> None:
                             prompt=prompt,
                             developer=developer_prompt,
                             temperature=config["temperature"],
-                            max_output_tokens=config["max_output_tokens"],
+                            top_p=config["top_p"],
                             reasoning_effort=config["reasoning_effort"],
                             verbosity=config["verbosity"],
                         )
