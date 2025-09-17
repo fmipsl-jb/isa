@@ -277,7 +277,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("1.9.3")
+    st.caption("1.9.4")
 
     try:
         client = build_client()
@@ -291,7 +291,7 @@ def main() -> None:
         "User question",
         value=default_user_prompt,
         height=120,
-        placeholder="...",
+        placeholder="Ask a question in any language, such as '¿Qué es la consola y cómo se utiliza?'",
     )
 
     developer_prompt = load_developer_prompt() or None
