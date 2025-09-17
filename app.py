@@ -291,7 +291,7 @@ def main() -> None:
         "User question",
         value=default_user_prompt,
         height=120,
-        placeholder="Ask a question in any language, such as '¿Qué es la consola y cómo se utiliza?'",
+        placeholder="Ask a question in any language, such as \"¿Qué es la consola y cómo se utiliza?\"",
     )
 
     developer_prompt = load_developer_prompt() or None
