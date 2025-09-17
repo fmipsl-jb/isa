@@ -277,7 +277,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("1.9.2")
+    st.caption("1.9.3")
 
     try:
         client = build_client()
@@ -300,19 +300,19 @@ def main() -> None:
 
     if run_button:
         if not prompt.strip():
-            st.warning("Bitte gib eine Frage ein, bevor du eine Antwort generierst.")
+            st.warning("Please enter a question before generating a response.")
             st.stop()
 
         models: List[str] = config["models"]
         if not models:
-            st.warning("Bitte wähle mindestens ein Modell aus.")
+            st.warning("Please select at least one model to query.")
             st.stop()
 
         columns = st.columns(len(models))
         for index, model in enumerate(models):
             with columns[index]:
                 st.subheader(model)
-                with st.spinner("Frage wird gesendet…"):
+                with st.spinner("Retrieving response…"):
                     try:
                         run_config = RunConfig(
                             model=model,
