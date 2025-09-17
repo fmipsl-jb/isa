@@ -206,11 +206,11 @@ def main() -> None:
         placeholder="Beschreibe, womit du Hilfe brauchst…",
     )
 
-    developer_prompt = st.text_area(
-        "Developer prompt (optional)",
-        value=DEFAULT_DEVELOPER_PROMPT,
-        height=400,
-    )
+    #developer_prompt = st.text_area(
+     #   "Developer prompt (optional)",
+      #  value=DEFAULT_DEVELOPER_PROMPT,
+       # height=400,
+    #)
 
     run_button = st.button("Generate responses", type="primary")
 
