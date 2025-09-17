@@ -27,7 +27,7 @@ class RunConfig:
     prompt: str
     developer: Optional[str]
     temperature: float
-    top_p: float
+    top_p: Optional[float]
     reasoning_effort: Optional[str]
     verbosity: str
 
@@ -107,6 +107,12 @@ def model_supports_reasoning_and_verbosity(model: str) -> bool:
     return normalized.startswith("gpt-5")
 
 
+def model_supports_top_p(model: str) -> bool:
+    """Return True when the model accepts the `top_p` parameter."""
+    normalized = model.lower().strip()
+    return not normalized.startswith("gpt-5")
+
+
 def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
     input_messages = build_input_messages(config.prompt, config.developer)
     supports_reasoning_and_verbosity = model_supports_reasoning_and_verbosity(config.model)
@@ -119,7 +125,7 @@ def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
         "store": True,
     }
 
-    if config.top_p is not None:
+    if config.top_p is not None and model_supports_top_p(config.model):
         params["top_p"] = config.top_p
 
     if supports_reasoning_and_verbosity:
