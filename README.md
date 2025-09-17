@@ -14,8 +14,9 @@ Streamlit playground for testing prompts and OpenAI Responses API models side by
    pip install -r requirements.txt
    ```
 3. **Add your OpenAI API key.**
-   - Duplicate `secrets.example.toml` to `.streamlit/secrets.toml`.
+   - Duplicate `secrets.example.toml` (or `.streamlit/secrets.template.toml`) to `.streamlit/secrets.toml`.
    - Replace the placeholder value with your real key.
+   - Alternatively, set the `OPENAI_API_KEY` environment variable—this is how Streamlit Community Cloud stores secrets.
 4. **Launch the Streamlit app.**
    ```bash
    streamlit run app.py
