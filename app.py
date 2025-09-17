@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -47,13 +48,16 @@ class RunConfig:
 
 def build_client() -> OpenAI:
     """Create an OpenAI client using the Streamlit secrets."""
-    try:
-        api_key = st.secrets["openai"]["api_key"]
-    except KeyError as exc:
+    api_key = st.secrets.get("openai", {}).get("api_key")
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY")
+
+    if not api_key:
         st.error(
-            "OpenAI API key not found. Add it to `.streamlit/secrets.toml` under the `[openai]` section."
+            "OpenAI API key not found. Add it to `.streamlit/secrets.toml` under the `[openai]` section "
+            "or configure `OPENAI_API_KEY` as an environment variable."
         )
-        raise RuntimeError("Missing OpenAI API key") from exc
+        raise RuntimeError("Missing OpenAI API key")
 
     return OpenAI(api_key=api_key)
 
