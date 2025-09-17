@@ -28,7 +28,7 @@ The Intelligent Search Assistant is a Streamlit application for experimenting wi
 
 - **Side-by-side model comparison** – Select up to two models and view their responses to the same prompt in separate columns.
 - **Prompt and developer instructions** – Combine a user prompt with an optional developer persona defined in Streamlit secrets.
-- **Granular response tuning** – Adjust temperature, nucleus sampling (top_p), reasoning effort, and verbosity directly from the sidebar.
+- **Granular response tuning** – Control temperature and top_p for most models, or switch the reasoning effort and verbosity controls when a GPT-5-family model is selected.
 - **Raw JSON viewer** – Inspect the full Responses API payload in an expandable panel for each model invocation.
 - **Graceful error handling** – In-app messages highlight missing API keys, empty prompts, or upstream API issues.
 
@@ -59,7 +59,7 @@ The Intelligent Search Assistant is a Streamlit application for experimenting wi
 The app reads configuration from Streamlit secrets. Provide your API key in one of two ways:
 
 1. **Secrets file (recommended)**
-   - Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml`.
+   - Create `.streamlit/secrets.toml` in the project root (create the folder if it does not yet exist).
    - Add your key under the `[openai]` section:
      ```toml
      [openai]
@@ -102,10 +102,10 @@ Streamlit displays a local URL (typically `http://localhost:8501`). Open the lin
 ### Sidebar controls
 
 - **Models to query** – Multiselect capped at two entries. Defaults to the first two items in the internal `DEFAULT_MODELS` list.
-- **Temperature** – Controls randomness (`0.0` deterministic, `2.0` very creative).
-- **Top P** – Nucleus sampling cutoff for additional randomness control.
-- **Reasoning effort** – Maps to `reasoning.effort` for models that support structured reasoning (`gpt-4.1*`, `gpt-5*`).
-- **Response verbosity** – Sets `text.verbosity` for eligible models (`low`, `medium`, or `high`).
+- **Temperature** – Controls randomness (`0.0` deterministic, `2.0` very creative) for models that do *not* belong to the GPT-5 family.
+- **Top P** – Nucleus sampling cutoff for additional randomness control. This parameter is sent only to non GPT-5 models.
+- **Reasoning effort** – Maps to `reasoning.effort` (`minimal`, `low`, `medium`, or `high`) for GPT-5 family models. Other models ignore this setting.
+- **Response verbosity** – Sets `text.verbosity` (`low`, `medium`, or `high`) for GPT-5 family models. Other models ignore this setting.
 
 ### Viewing raw responses
 
@@ -142,7 +142,7 @@ DEFAULT_MODELS = [
 ]
 ```
 
-All selected models must support the OpenAI Responses API. Models beginning with `gpt-4o` currently skip the reasoning and verbosity options; other models receive the chosen `reasoning.effort` and `text.verbosity` values.
+All selected models must support the OpenAI Responses API. GPT-5 family models receive the reasoning and verbosity parameters, while other models receive the temperature and top_p values.
 
 To experiment with additional models, modify the list in `app.py` or re-enable the commented custom model input in `render_sidebar()`.
 
