@@ -139,28 +139,45 @@ def extract_prompt_text(prompt_data: Dict[str, Any]) -> str:
 
 def load_default_user_prompt(client: OpenAI) -> str:
     prompts_section = st.secrets.get("prompts", {})
+
+    fallback_prompt_raw = prompts_section.get("default_user_prompt")
+    fallback_prompt = (
+        fallback_prompt_raw.strip() if isinstance(fallback_prompt_raw, str) else ""
+    )
+
     prompt_id_raw = prompts_section.get("default_user_prompt_id")
     prompt_id = prompt_id_raw.strip() if isinstance(prompt_id_raw, str) else None
     if not prompt_id:
-        return ""
+        return fallback_prompt
 
     prompt_version_raw = prompts_section.get("default_user_prompt_version", "6")
-    prompt_version = str(prompt_version_raw).strip()
-    if not prompt_version:
-        prompt_version = "6"
+    prompt_version = str(prompt_version_raw).strip() or "6"
 
     try:
         prompt_data: Dict[str, Any] = client.get(
             f"/prompts/{prompt_id}/versions/{prompt_version}",
             cast_to=dict,
         )
-    except Exception as error:  # pylint: disable=broad-except
-        st.warning(f"Failed to load default prompt: {error}")
-        return ""
+    except APIError as api_error:
+        status_code = getattr(api_error, "status_code", None)
+        if status_code:
+            st.warning(
+                f"Failed to load default prompt from the API (status {status_code}). Using fallback prompt."
+            )
+        else:
+            st.warning("Failed to load default prompt from the API. Using fallback prompt.")
+        return fallback_prompt
+    except Exception:  # pylint: disable=broad-except
+        st.warning("Failed to load default prompt. Using fallback prompt.")
+        return fallback_prompt
 
     prompt_text = extract_prompt_text(prompt_data)
     if prompt_text:
         return prompt_text
+
+    if fallback_prompt:
+        st.warning("Default prompt did not contain any text content. Using fallback prompt.")
+        return fallback_prompt
 
     st.warning("Default prompt did not contain any text content.")
     return ""
