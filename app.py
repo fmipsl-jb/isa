@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import streamlit as st
 from openai import APIConnectionError, APIError, OpenAI
@@ -93,11 +93,76 @@ def load_developer_prompt() -> Optional[str]:
     return None
 
 
-def load_default_user_prompt() -> str:
+def extract_prompt_text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, Sequence):
+        chunks: List[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            text_value = item.get("text")
+            if isinstance(text_value, str) and text_value.strip():
+                chunks.append(text_value.strip())
+        if chunks:
+            return "\n".join(chunks)
+
+    return ""
+
+
+def extract_prompt_text(prompt_data: Dict[str, Any]) -> str:
+    content_candidates: List[Any] = []
+
+    if "content" in prompt_data:
+        content_candidates.append(prompt_data.get("content"))
+
+    prompt_section = prompt_data.get("prompt")
+    if isinstance(prompt_section, dict):
+        content_candidates.append(prompt_section.get("content"))
+
+    data_section = prompt_data.get("data")
+    if isinstance(data_section, dict):
+        if "content" in data_section:
+            content_candidates.append(data_section.get("content"))
+        nested_prompt = data_section.get("prompt")
+        if isinstance(nested_prompt, dict):
+            content_candidates.append(nested_prompt.get("content"))
+
+    for candidate in content_candidates:
+        extracted = extract_prompt_text_from_content(candidate)
+        if extracted:
+            return extracted
+
+    return ""
+
+
+def load_default_user_prompt(client: OpenAI) -> str:
     prompts_section = st.secrets.get("prompts", {})
-    default_prompt = prompts_section.get("default_user_prompt")
-    if default_prompt:
-        return default_prompt
+    prompt_id_raw = prompts_section.get("default_user_prompt_id")
+    prompt_id = prompt_id_raw.strip() if isinstance(prompt_id_raw, str) else None
+    if not prompt_id:
+        return ""
+
+    prompt_version_raw = prompts_section.get("default_user_prompt_version", "6")
+    prompt_version = str(prompt_version_raw).strip()
+    if not prompt_version:
+        prompt_version = "6"
+
+    try:
+        prompt_data: Dict[str, Any] = client.get(
+            f"/prompts/{prompt_id}/versions/{prompt_version}",
+            cast_to=dict,
+        )
+    except Exception as error:  # pylint: disable=broad-except
+        st.warning(f"Failed to load default prompt: {error}")
+        return ""
+
+    prompt_text = extract_prompt_text(prompt_data)
+    if prompt_text:
+        return prompt_text
+
+    st.warning("Default prompt did not contain any text content.")
     return ""
 
 
@@ -212,7 +277,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("1.8.1")
+    st.caption("1.9")
 
     try:
         client = build_client()
@@ -221,9 +286,10 @@ def main() -> None:
 
     config = render_sidebar()
 
+    default_user_prompt = load_default_user_prompt(client)
     prompt = st.text_area(
         "User question",
-        value=load_default_user_prompt(),
+        value=default_user_prompt,
         height=120,
         placeholder="...",
     )
