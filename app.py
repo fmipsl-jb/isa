@@ -190,7 +190,7 @@ def render_sidebar() -> Dict[str, Any]:
     reasoning_effort = st.sidebar.selectbox(
         "Reasoning effort",
         options=reasoning_options,
-        index=2,
+        index=0,
         help="Maps to the `reasoning.effort` parameter for eligible models.",
     )
     verbosity = st.sidebar.selectbox(
