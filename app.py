@@ -119,14 +119,19 @@ def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
         "store": True,
     }
 
+codex/update-api-calls-for-model-parameters
     if config.top_p is not None:
         params["top_p"] = config.top_p
 
+
+main
     if supports_reasoning_and_verbosity:
         if config.reasoning_effort and config.reasoning_effort != "default":
             params["reasoning"] = {"effort": config.reasoning_effort}
     else:
         params["temperature"] = config.temperature
+codex/update-api-calls-for-model-parameters
+        params["top_p"] = config.top_p
 
     response = client.responses.create(**params)
     return response.to_dict()
