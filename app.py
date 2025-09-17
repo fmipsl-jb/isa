@@ -1,4 +1,4 @@
-"""Streamlit app for experimenting with OpenAI Responses API prompts."""
+"""Intelligent Search Assistant"""
 
 from __future__ import annotations
 
@@ -199,7 +199,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("1.6")
+    st.caption("1.7")
 
     try:
         client = build_client()
