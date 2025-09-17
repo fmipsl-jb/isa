@@ -186,7 +186,7 @@ def render_sidebar() -> Dict[str, Any]:
     top_p = st.sidebar.slider(
         "Top P", min_value=0.0, max_value=1.0, value=0.8, step=0.05
     )
-    reasoning_options = ["default", "minimal", "low", "medium", "high"]
+    reasoning_options = ["minimal", "low", "medium", "high"]
     reasoning_effort = st.sidebar.selectbox(
         "Reasoning effort",
         options=reasoning_options,
@@ -212,7 +212,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("1.7")
+    st.caption("1.8")
 
     try:
         client = build_client()
