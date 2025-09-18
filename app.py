@@ -191,14 +191,19 @@ def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
         "store": True,
     }
 
-    params["tools"] = [
-        {
-            "type": "file_search",
-            "vector_store_ids": ["vs_68c92dcc842c81919b9996ec34b55c2c"],
-        }
-    ]
-    params["include"] = ["web_search_call.action.sources"]
-    params["tool_choice"] = "auto"
+    use_file_search_tool = True
+    if supports_reasoning_and_verbosity and config.reasoning_effort == "minimal":
+        use_file_search_tool = False
+
+    if use_file_search_tool:
+        params["tools"] = [
+            {
+                "type": "file_search",
+                "vector_store_ids": ["vs_68c92dcc842c81919b9996ec34b55c2c"],
+            }
+        ]
+        params["include"] = ["web_search_call.action.sources"]
+        params["tool_choice"] = "auto"
 
     if config.top_p is not None and model_supports_top_p(config.model):
         params["top_p"] = config.top_p
