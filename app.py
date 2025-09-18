@@ -148,7 +148,7 @@ def load_default_user_prompt(client: OpenAI) -> str:
     prompt_version_raw = prompts_section.get("default_user_prompt_version", "6")
     prompt_version = str(prompt_version_raw).strip()
     if not prompt_version:
-        prompt_version = "6"
+        prompt_version = "7"
 
     try:
         prompt_data: Dict[str, Any] = client.get(
@@ -287,7 +287,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("1.9.6")
+    st.caption("app-version 1.10.1, prompt-version 7")
 
     try:
         client = build_client()
@@ -301,7 +301,7 @@ def main() -> None:
         "User question",
         value=default_user_prompt,
         height=120,
-        placeholder="Ask a question in any language, such as \"¿Qué es la consola y cómo se utiliza?\"",
+        placeholder="Ask a question in any language, such as \"¿Qué es la consola y cómo se utiliza?\" or \"Hoe bewerk ik meerkanaals drumopnames om de timing te optimaliseren?\"",
     )
 
     developer_prompt = load_developer_prompt() or None
