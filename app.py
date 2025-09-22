@@ -242,7 +242,7 @@ def render_sidebar() -> Dict[str, Any]:
     models = st.sidebar.multiselect(
         "Models to query",
         options=DEFAULT_MODELS,
-        default=DEFAULT_MODELS[:2],
+        default=DEFAULT_MODELS[:1],
         max_selections=2,
         help="Select up to two models to compare responses side-by-side.",
     )
@@ -292,7 +292,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("app-version 1.10.2 (built 250918), prompt-version 8")
+    st.caption("app-version 1.10.3 (250922)")
 
     try:
         client = build_client()
