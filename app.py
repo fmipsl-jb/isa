@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import streamlit as st
 from openai import APIConnectionError, APIError, OpenAI
@@ -179,7 +179,13 @@ def model_supports_top_p(model: str) -> bool:
     return not normalized.startswith("gpt-5")
 
 
-def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
+def run_model(
+    client: OpenAI,
+    config: RunConfig,
+    *,
+    stream: bool = False,
+    on_text_delta: Optional[Callable[[str], None]] = None,
+) -> Tuple[Dict[str, Any], str]:
     input_messages = build_input_messages(config.prompt, config.developer)
     supports_reasoning_and_verbosity = model_supports_reasoning_and_verbosity(config.model)
     params: Dict[str, Any] = {
@@ -214,8 +220,49 @@ def run_model(client: OpenAI, config: RunConfig) -> Dict[str, Any]:
     else:
         params["temperature"] = config.temperature
 
+    if stream:
+        text_chunks: List[str] = []
+
+        def append_text(delta_value: Optional[str]) -> None:
+            if not delta_value:
+                return
+            text_chunks.append(delta_value)
+            if on_text_delta:
+                on_text_delta("".join(text_chunks))
+
+        with client.responses.stream(**params) as stream_response:
+            final_response = None
+            for event in stream_response:
+                if event.type == "response.output_text.delta":
+                    delta = getattr(event, "delta", None)
+                    if isinstance(delta, str):
+                        append_text(delta)
+                    elif isinstance(delta, dict):
+                        text_value = delta.get("text")
+                        if isinstance(text_value, str):
+                            append_text(text_value)
+                elif event.type == "response.error":
+                    error = getattr(event, "error", None)
+                    message = "Unexpected streaming error"
+                    if isinstance(error, dict):
+                        message = error.get("message", message)
+                    elif isinstance(error, str):
+                        message = error
+                    raise RuntimeError(message)
+
+            final_response = stream_response.get_final_response()
+
+        response_dict = final_response.to_dict() if final_response else {}
+        if not text_chunks:
+            text_output = extract_output_text(response_dict)
+        else:
+            text_output = "".join(text_chunks)
+        return response_dict, text_output
+
     response = client.responses.create(**params)
-    return response.to_dict()
+    response_dict = response.to_dict()
+    text_output = extract_output_text(response_dict)
+    return response_dict, text_output
 
 
 def extract_output_text(response: Dict[str, Any]) -> str:
@@ -327,6 +374,11 @@ def main() -> None:
         for index, model in enumerate(models):
             with columns[index]:
                 st.subheader(model)
+                output_placeholder = st.empty()
+
+                def update_streaming_text(text: str) -> None:
+                    output_placeholder.markdown(text if text else " ")
+
                 with st.spinner("Retrieving response…"):
                     try:
                         run_config = RunConfig(
@@ -338,8 +390,12 @@ def main() -> None:
                             reasoning_effort=config["reasoning_effort"],
                             verbosity=config["verbosity"],
                         )
-                        response = run_model(client, run_config)
-                        output_text = extract_output_text(response)
+                        response, output_text = run_model(
+                            client,
+                            run_config,
+                            stream=True,
+                            on_text_delta=update_streaming_text,
+                        )
                     except (APIConnectionError, APIError) as api_error:
                         st.error(f"API error: {api_error}")
                         continue
@@ -347,7 +403,10 @@ def main() -> None:
                         st.error(f"Unexpected error: {error}")
                         continue
 
-                st.markdown(output_text)
+                if output_text.strip():
+                    output_placeholder.markdown(output_text)
+                else:
+                    output_placeholder.markdown("_No output text was returned._")
 
                 with st.expander("Show raw response"):
                     st.json(response)
