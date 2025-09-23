@@ -339,7 +339,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("app-version 1.10.3 (250922)")
+    st.caption("app-version 2.0.0 (250923)")
 
     try:
         client = build_client()
