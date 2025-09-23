@@ -230,17 +230,36 @@ def run_model(
             if on_text_delta:
                 on_text_delta("".join(text_chunks))
 
+        def extract_delta_text(delta: Any) -> Optional[str]:
+            if isinstance(delta, str):
+                return delta
+
+            if isinstance(delta, dict):
+                text_value = delta.get("text")
+                if isinstance(text_value, str):
+                    return text_value
+                return None
+
+            text_attr = getattr(delta, "text", None)
+            if isinstance(text_attr, str):
+                return text_attr
+
+            to_dict = getattr(delta, "to_dict", None)
+            if callable(to_dict):
+                delta_dict = to_dict()
+                if isinstance(delta_dict, dict):
+                    text_value = delta_dict.get("text")
+                    if isinstance(text_value, str):
+                        return text_value
+
+            return None
+
         with client.responses.stream(**params) as stream_response:
             final_response = None
             for event in stream_response:
                 if event.type == "response.output_text.delta":
                     delta = getattr(event, "delta", None)
-                    if isinstance(delta, str):
-                        append_text(delta)
-                    elif isinstance(delta, dict):
-                        text_value = delta.get("text")
-                        if isinstance(text_value, str):
-                            append_text(text_value)
+                    append_text(extract_delta_text(delta))
                 elif event.type == "response.error":
                     error = getattr(event, "error", None)
                     message = "Unexpected streaming error"
