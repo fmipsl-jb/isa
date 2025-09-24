@@ -1,6 +1,6 @@
-# Intelligent Search Assistant (ISA) 2.0
+# Intelligent Search Assistant (ISA)
 
-The Intelligent Search Assistant is a Streamlit-based workbench for experimenting with the OpenAI Responses API. Version 2.0 adds streaming output, built-in tool calls, and first-class support for prompt assets so that teams can evaluate models and prompts in a workflow that mirrors production integrations. This README is intended to give a developer everything they need to understand how the app works, how to configure it, and how to adapt it for real-world deployments.
+The Intelligent Search Assistant is a Streamlit-based workbench for experimenting with the OpenAI Responses API. Version 2 adds streaming output, built-in tool calls, and first-class support for prompt assets so that teams can evaluate models and prompts in a workflow that mirrors production integrations. This README is intended to give a developer everything they need to understand how the app works, how to configure it, and how to adapt it for real-world deployments.
 
 ---
 
@@ -105,8 +105,6 @@ api_key = "sk-your-api-key"
 [prompts]
 # Optional entries – see below for details.
 # developer_prompt = "Act as a friendly mentor..."
-# default_user_prompt_id = "prompt_123abc"
-# default_user_prompt_version = "6"
 ```
 
 ### Environment variables
@@ -116,8 +114,6 @@ If you cannot use Streamlit secrets, export environment variables before launchi
 ```bash
 export OPENAI_API_KEY="sk-your-api-key"
 # Optional: override the prompt ID or version without editing secrets.
-export ISA_DEFAULT_PROMPT_ID="prompt_123abc"
-export ISA_DEFAULT_PROMPT_VERSION="8"
 ```
 
 Environment variables take precedence only when the associated value is not present in Streamlit secrets. `ISA_DEFAULT_PROMPT_ID` and `ISA_DEFAULT_PROMPT_VERSION` are not read directly by the app, but you can easily modify `load_default_user_prompt()` to check for them if you prefer environment-based configuration.
