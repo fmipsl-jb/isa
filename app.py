@@ -195,6 +195,7 @@ def run_model(
             config.verbosity if supports_reasoning_and_verbosity else None
         ),
         "store": True,
+        "prompt_cache_key": "isa-poc",
     }
 
     use_file_search_tool = True
