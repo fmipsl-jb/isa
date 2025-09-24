@@ -179,6 +179,12 @@ def model_supports_top_p(model: str) -> bool:
     return not normalized.startswith("gpt-5")
 
 
+def model_supports_streaming(model: str) -> bool:
+    """Return True when the model can be queried using streaming responses."""
+    normalized = model.lower().strip()
+    return not normalized.startswith("gpt-5")
+
+
 def run_model(
     client: OpenAI,
     config: RunConfig,
@@ -221,7 +227,9 @@ def run_model(
     else:
         params["temperature"] = config.temperature
 
-    if stream:
+    supports_streaming = model_supports_streaming(config.model)
+
+    if stream and supports_streaming:
         text_chunks: List[str] = []
 
         def append_text(delta_value: Optional[str]) -> None:
