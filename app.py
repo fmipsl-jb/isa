@@ -409,16 +409,7 @@ def main() -> None:
 
     developer_prompt = load_developer_prompt() or None
 
-    action_col, reset_col = st.columns([3, 1])
-    with action_col:
-        run_button = st.button("Generate responses", type="primary")
-    with reset_col:
-        reset_button = st.button("Start new conversation")
-
-    if reset_button:
-        st.session_state["conversations"] = {}
-        st.session_state["conversation_history"] = {}
-        st.experimental_rerun()
+    run_button = st.button("Generate responses", type="primary")
 
     user_prompt = prompt.strip()
     if run_button:
