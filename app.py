@@ -31,6 +31,8 @@ class RunConfig:
     top_p: Optional[float]
     reasoning_effort: Optional[str]
     verbosity: str
+    conversation_id: Optional[str] = None
+    previous_response_id: Optional[str] = None
 
 
 def build_client() -> OpenAI:
@@ -49,9 +51,14 @@ def build_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
-def build_input_messages(prompt: str, developer: Optional[str]) -> List[Dict[str, Any]]:
+def build_input_messages(
+    prompt: str,
+    developer: Optional[str],
+    *,
+    include_developer: bool = True,
+) -> List[Dict[str, Any]]:
     messages: List[Dict[str, Any]] = []
-    if developer:
+    if developer and include_developer:
         messages.append(
             {
                 "role": "developer",
@@ -192,7 +199,12 @@ def run_model(
     stream: bool = False,
     on_text_delta: Optional[Callable[[str], None]] = None,
 ) -> Tuple[Dict[str, Any], str]:
-    input_messages = build_input_messages(config.prompt, config.developer)
+    include_developer = not (config.conversation_id or config.previous_response_id)
+    input_messages = build_input_messages(
+        config.prompt,
+        config.developer,
+        include_developer=include_developer,
+    )
     supports_reasoning_and_verbosity = model_supports_reasoning_and_verbosity(config.model)
     params: Dict[str, Any] = {
         "model": config.model,
@@ -203,6 +215,11 @@ def run_model(
         "store": True,
         "prompt_cache_key": "isa-poc",
     }
+
+    if config.conversation_id:
+        params["conversation"] = config.conversation_id
+    elif config.previous_response_id:
+        params["previous_response_id"] = config.previous_response_id
 
     use_file_search_tool = True
     if supports_reasoning_and_verbosity and config.reasoning_effort == "minimal":
@@ -293,6 +310,20 @@ def run_model(
     return response_dict, text_output
 
 
+def extract_conversation_id(response: Dict[str, Any]) -> Optional[str]:
+    conversation = response.get("conversation")
+    if isinstance(conversation, dict):
+        conversation_id = conversation.get("id")
+        if isinstance(conversation_id, str) and conversation_id.strip():
+            return conversation_id.strip()
+
+    conversation_id = response.get("conversation_id")
+    if isinstance(conversation_id, str) and conversation_id.strip():
+        return conversation_id.strip()
+
+    return None
+
+
 def extract_output_text(response: Dict[str, Any]) -> str:
     output_text = response.get("output_text")
     if output_text:
@@ -367,7 +398,12 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("version 2.0.2 (250924)")
+    st.caption("version 2.1.2 (251026)")
+
+    if "conversations" not in st.session_state:
+        st.session_state["conversations"] = {}
+    if "conversation_history" not in st.session_state:
+        st.session_state["conversation_history"] = {}
 
     try:
         client = build_client()
@@ -388,8 +424,9 @@ def main() -> None:
 
     run_button = st.button("Generate responses", type="primary")
 
+    user_prompt = prompt.strip()
     if run_button:
-        if not prompt.strip():
+        if not user_prompt:
             st.warning("Please enter a question before generating a response.")
             st.stop()
 
@@ -398,46 +435,108 @@ def main() -> None:
             st.warning("Please select at least one model to query.")
             st.stop()
 
+    models = config["models"]
+    if models:
         columns = st.columns(len(models))
         for index, model in enumerate(models):
             with columns[index]:
                 st.subheader(model)
-                output_placeholder = st.empty()
 
-                def update_streaming_text(text: str) -> None:
-                    output_placeholder.markdown(text if text else " ")
-
-                with st.spinner("Retrieving response…"):
-                    try:
-                        run_config = RunConfig(
-                            model=model,
-                            prompt=prompt,
-                            developer=developer_prompt,
-                            temperature=config["temperature"],
-                            top_p=config["top_p"],
-                            reasoning_effort=config["reasoning_effort"],
-                            verbosity=config["verbosity"],
-                        )
-                        response, output_text = run_model(
-                            client,
-                            run_config,
-                            stream=True,
-                            on_text_delta=update_streaming_text,
-                        )
-                    except (APIConnectionError, APIError) as api_error:
-                        st.error(f"API error: {api_error}")
+                history: List[Dict[str, str]] = st.session_state["conversation_history"].get(model, [])
+                for message in history:
+                    role = message.get("role", "assistant")
+                    content = message.get("content", "")
+                    if not content:
                         continue
-                    except Exception as error:  # pylint: disable=broad-except
-                        st.error(f"Unexpected error: {error}")
-                        continue
+                    with st.chat_message("user" if role == "user" else "assistant"):
+                        st.markdown(content)
 
-                if output_text.strip():
-                    output_placeholder.markdown(output_text)
-                else:
-                    output_placeholder.markdown("_No output text was returned._")
+                if run_button:
+                    with st.chat_message("user"):
+                        st.markdown(user_prompt)
 
-                with st.expander("Show raw response"):
-                    st.json(response)
+                    with st.chat_message("assistant"):
+                        output_placeholder = st.empty()
+
+                    def update_streaming_text(text: str) -> None:
+                        output_placeholder.markdown(text if text else " ")
+
+                    conversation_state = st.session_state["conversations"].get(model)
+                    conversation_id: Optional[str] = None
+                    previous_response_id: Optional[str] = None
+                    if isinstance(conversation_state, dict):
+                        conversation_id = conversation_state.get("conversation_id")
+                        previous_response_id = conversation_state.get("previous_response_id")
+                    elif isinstance(conversation_state, str):
+                        conversation_id = conversation_state or None
+
+                    response: Dict[str, Any]
+                    output_text = ""
+
+                    with st.spinner("Retrieving response…"):
+                        try:
+                            run_config = RunConfig(
+                                model=model,
+                                prompt=prompt,
+                                developer=developer_prompt,
+                                temperature=config["temperature"],
+                                top_p=config["top_p"],
+                                reasoning_effort=config["reasoning_effort"],
+                                verbosity=config["verbosity"],
+                                conversation_id=conversation_id,
+                                previous_response_id=previous_response_id,
+                            )
+                            response, output_text = run_model(
+                                client,
+                                run_config,
+                                stream=True,
+                                on_text_delta=update_streaming_text,
+                            )
+                        except (APIConnectionError, APIError) as api_error:
+                            output_placeholder.error(f"API error: {api_error}")
+                            continue
+                        except Exception as error:  # pylint: disable=broad-except
+                            output_placeholder.error(f"Unexpected error: {error}")
+                            continue
+
+                    sanitized_output = output_text.strip()
+                    if sanitized_output:
+                        output_placeholder.markdown(output_text)
+                    else:
+                        output_placeholder.markdown("_No output text was returned._")
+
+                    conversation_identifier = extract_conversation_id(response)
+                    existing_state: Dict[str, Optional[str]] = {}
+                    state_entry = st.session_state["conversations"].get(model)
+                    if isinstance(state_entry, dict):
+                        existing_state = state_entry
+                    elif isinstance(state_entry, str) and state_entry:
+                        existing_state = {"conversation_id": state_entry}
+
+                    new_state: Dict[str, Optional[str]] = {
+                        "conversation_id": conversation_identifier
+                        or existing_state.get("conversation_id"),
+                        "previous_response_id": response.get("id"),
+                    }
+                    st.session_state["conversations"][model] = new_state
+
+                    model_history = st.session_state["conversation_history"].setdefault(model, [])
+                    model_history.extend(
+                        [
+                            {"role": "user", "content": user_prompt},
+                            {
+                                "role": "assistant",
+                                "content": sanitized_output
+                                if sanitized_output
+                                else "_No output text was returned._",
+                            },
+                        ]
+                    )
+
+                    with st.expander("Show raw response"):
+                        st.json(response)
+                elif not history:
+                    st.info("No conversation yet. Ask a question to get started.")
 
 
 if __name__ == "__main__":
