@@ -398,7 +398,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("version 2.1.1 (251026)")
+    st.caption("version 2.1.2 (251026)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
