@@ -32,6 +32,7 @@ class RunConfig:
     reasoning_effort: Optional[str]
     verbosity: str
     conversation_id: Optional[str] = None
+    previous_response_id: Optional[str] = None
 
 
 def build_client() -> OpenAI:
@@ -50,9 +51,14 @@ def build_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
-def build_input_messages(prompt: str, developer: Optional[str]) -> List[Dict[str, Any]]:
+def build_input_messages(
+    prompt: str,
+    developer: Optional[str],
+    *,
+    include_developer: bool = True,
+) -> List[Dict[str, Any]]:
     messages: List[Dict[str, Any]] = []
-    if developer:
+    if developer and include_developer:
         messages.append(
             {
                 "role": "developer",
@@ -193,7 +199,12 @@ def run_model(
     stream: bool = False,
     on_text_delta: Optional[Callable[[str], None]] = None,
 ) -> Tuple[Dict[str, Any], str]:
-    input_messages = build_input_messages(config.prompt, config.developer)
+    include_developer = not (config.conversation_id or config.previous_response_id)
+    input_messages = build_input_messages(
+        config.prompt,
+        config.developer,
+        include_developer=include_developer,
+    )
     supports_reasoning_and_verbosity = model_supports_reasoning_and_verbosity(config.model)
     params: Dict[str, Any] = {
         "model": config.model,
@@ -206,7 +217,9 @@ def run_model(
     }
 
     if config.conversation_id:
-        params["conversation"] = {"id": config.conversation_id}
+        params["conversation"] = config.conversation_id
+    elif config.previous_response_id:
+        params["previous_response_id"] = config.previous_response_id
 
     use_file_search_tool = True
     if supports_reasoning_and_verbosity and config.reasoning_effort == "minimal":
@@ -448,7 +461,15 @@ def main() -> None:
                     def update_streaming_text(text: str) -> None:
                         output_placeholder.markdown(text if text else " ")
 
-                    conversation_id = st.session_state["conversations"].get(model)
+                    conversation_state = st.session_state["conversations"].get(model)
+                    conversation_id: Optional[str] = None
+                    previous_response_id: Optional[str] = None
+                    if isinstance(conversation_state, dict):
+                        conversation_id = conversation_state.get("conversation_id")
+                        previous_response_id = conversation_state.get("previous_response_id")
+                    elif isinstance(conversation_state, str):
+                        conversation_id = conversation_state or None
+
                     response: Dict[str, Any]
                     output_text = ""
 
@@ -463,6 +484,7 @@ def main() -> None:
                                 reasoning_effort=config["reasoning_effort"],
                                 verbosity=config["verbosity"],
                                 conversation_id=conversation_id,
+                                previous_response_id=previous_response_id,
                             )
                             response, output_text = run_model(
                                 client,
@@ -484,8 +506,19 @@ def main() -> None:
                         output_placeholder.markdown("_No output text was returned._")
 
                     conversation_identifier = extract_conversation_id(response)
-                    if conversation_identifier:
-                        st.session_state["conversations"][model] = conversation_identifier
+                    existing_state: Dict[str, Optional[str]] = {}
+                    state_entry = st.session_state["conversations"].get(model)
+                    if isinstance(state_entry, dict):
+                        existing_state = state_entry
+                    elif isinstance(state_entry, str) and state_entry:
+                        existing_state = {"conversation_id": state_entry}
+
+                    new_state: Dict[str, Optional[str]] = {
+                        "conversation_id": conversation_identifier
+                        or existing_state.get("conversation_id"),
+                        "previous_response_id": response.get("id"),
+                    }
+                    st.session_state["conversations"][model] = new_state
 
                     model_history = st.session_state["conversation_history"].setdefault(model, [])
                     model_history.extend(
