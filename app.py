@@ -1,4 +1,4 @@
-"""Intelligent Search Assistant"""
+"""*Staging* Intelligent Search Assistant"""
 
 from __future__ import annotations
 
@@ -367,10 +367,20 @@ def render_sidebar() -> Dict[str, Any]:
     #         models.append(custom_model)
 
     temperature = st.sidebar.slider(
-        "Temperature", min_value=0.0, max_value=2.0, value=0.5, step=0.1
+        "Temperature",
+        min_value=0.0,
+        max_value=2.0,
+        value=0.5,
+        step=0.1,
+        help="Adjusts randomness when sampling tokens. Higher values increase variety while lower values make responses more deterministic.",
     )
     top_p = st.sidebar.slider(
-        "Top P", min_value=0.0, max_value=1.0, value=0.8, step=0.05
+        "Top P",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.8,
+        step=0.05,
+        help="Controls nucleus sampling by limiting choices to the most probable tokens whose cumulative probability stays under this threshold.",
     )
     reasoning_options = ["minimal", "low", "medium", "high"]
     reasoning_effort = st.sidebar.selectbox(
@@ -398,7 +408,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
     st.title("Intelligent Search Assistant")
-    st.caption("version 2.1.2 (251026)")
+    st.caption("version 2.1.3 (250929)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
