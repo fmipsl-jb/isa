@@ -174,9 +174,9 @@ Streamlit will display a local URL (typically `http://localhost:8501`). Keep the
 - The classifier call is silent to end users. It always sends `store=True`, reuses a cache key, and passes the user question through prompt variables defined in secrets.
 - Route 1 uses `prompt_app`, `temperature=0.5`, `top_p=0.8`, and streaming updates. Route 2 uses `prompt_creative` with `reasoning.effort="low"`, `text.verbosity="low"`, and synchronous execution.
 
-### Sidebar configuration (hidden in Version 3)
+### Sidebar configuration (removed in Version 3)
 
-Version 3 hides the configuration sidebar entirely. The previous controls remain in the codebase (commented out) for reference. To restore the sliders and multi-select for experimentation, uncomment `render_sidebar()` in `app.py` and re-enable the function definition.
+Version 3 removes the configuration sidebar entirely. The previous sliders and multi-select have been deleted from the codebase to prevent residual errors tied to the old implementation.
 
 ### Real-time streaming
 
