@@ -32,12 +32,12 @@ class RunConfig:
     top_p: Optional[float]
     reasoning_effort: Optional[str]
     verbosity: str
-    token: str = "APP"
-    agent_type: str = "app"
+    token: str
+    agent_type: str
     conversation_id: Optional[str] = None
     previous_response_id: Optional[str] = None
     prompt_reference: Optional[Dict[str, Any]] = None
-    cache_key: str = "isa-poc"
+    cache_key: Optional[str] = None
 
 
 def build_client() -> OpenAI:
@@ -285,9 +285,13 @@ def run_model(
             config.verbosity if supports_reasoning_and_verbosity else None
         ),
         "store": True,
-        "prompt_cache_key": config.cache_key,
-        "metadata": {"token": config.token},
     }
+
+    if config.cache_key:
+        params["prompt_cache_key"] = config.cache_key
+
+    if config.token:
+        params["metadata"] = {"token": config.token}
 
     if config.conversation_id:
         params["conversation"] = config.conversation_id
