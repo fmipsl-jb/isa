@@ -64,9 +64,9 @@ This layout keeps business logic in `app.py` while leveraging Streamlit for layo
 ## Key Features
 
 - **Automatic routing** – A background classifier selects Route 1 (gpt-4.1-nano with streaming) for deterministic application responses or Route 2 (gpt-5-nano without streaming) for creative needs.
-- **Versioned prompt defaults** – Automatically hydrate the main textarea with content retrieved from a managed prompt asset.
+- **Managed prompt defaults** – Automatically hydrate the main textarea with content retrieved from the latest version of a managed prompt asset.
 - **Prompt-level caching and storage** – All requests send `store=True` and reuse prompt cache keys so calls show up in the console history while benefiting from caching.
-- **Integrated file search tool** – Automatically attach the OpenAI `file_search` tool (with a predefined vector store) for grounded answers when reasoning effort is above `minimal`.
+- **Integrated agent tools** – Automatically attach the OpenAI `file_search` tool for grounded answers on every route and enable a scoped `web_search` tool for creative responses.
 - **Streaming output where supported** – Route 1 streams token deltas live in the UI, while Route 2 completes synchronously for GPT-5 models.
 - **Raw response explorer** – Inspect metadata such as latency, usage, and tool call transcripts inside an expandable panel.
 - **Graceful validation** – Inline warnings prevent empty prompts or missing API keys from triggering API requests.
@@ -103,22 +103,18 @@ Create `.streamlit/secrets.toml` at the project root (see `.streamlit/secrets.ex
 [openai]
 api_key = "sk-your-api-key"
 
-[prompts]
-# Optional developer/system message injected before every request.
-developer_prompt = "You are the Intelligent Search Assistant."
-# Optional defaults for the textarea.
-# default_user_prompt_id = "prompt_app_default_id"
-# default_user_prompt_version = "1"
-
 [prompts.prompt_app]
 id = "prompt_app_id"
-version = "1"
 variable_names = ["user_input"]
 cache_key = "isa-app"
 
+[prompts.prompt_creative]
+id = "prompt_creative_id"
+variable_names = ["user_input"]
+cache_key = "isa-creative"
+
 [prompts.prompt_classifier]
 id = "prompt_classifier_id"
-version = "1"
 variable_names = ["user_input"]
 model = "gpt-4.1-mini"
 cache_key = "isa-classifier"
@@ -130,20 +126,18 @@ If you cannot use Streamlit secrets, export environment variables before launchi
 
 ```bash
 export OPENAI_API_KEY="sk-your-api-key"
-# Optional: override the prompt ID or version without editing secrets.
 ```
 
-Environment variables take precedence only when the associated value is not present in Streamlit secrets. `ISA_DEFAULT_PROMPT_ID` and `ISA_DEFAULT_PROMPT_VERSION` are not read directly by the app, but you can easily modify `load_default_user_prompt()` to check for them if you prefer environment-based configuration.
+Environment variables take precedence only when the associated value is not present in Streamlit secrets. You can easily modify `load_default_user_prompt()` to check for additional environment-based overrides if needed.
 
 ### Optional prompt defaults
 
-The `[prompts]` block controls how the main textarea and the developer instructions are pre-populated:
+Optionally, you can add a `[prompts]` block to control how the main textarea and the developer instructions are pre-populated:
 
 - `developer_prompt` – Injected as a developer message (`role="developer"`) before each user prompt. Use this to enforce tone, format, or tool instructions.
 - `default_user_prompt_id` – Identifier of a saved prompt asset in the OpenAI Prompts API. When set, ISA fetches the prompt during page load.
-- `default_user_prompt_version` – (Default `6`) Which version of the prompt asset to retrieve. If omitted or blank, ISA falls back to version `8`.
 
-The nested tables `[prompts.prompt_app]` and `[prompts.prompt_classifier]` configure the prompt assets and cache keys used for the routes. Provide the prompt IDs, versions, and variable names expected by each prompt.
+The nested tables `[prompts.prompt_app]`, `[prompts.prompt_creative]`, and `[prompts.prompt_classifier]` configure the prompt assets and cache keys used for each agent. Provide the prompt IDs and variable names expected by every prompt. Cache keys are optional but recommended to keep call history organized.
 
 If the Prompts API call fails or returns no textual content, ISA surfaces a warning and the textarea falls back to an empty string.
 
@@ -178,7 +172,7 @@ Streamlit will display a local URL (typically `http://localhost:8501`). Keep the
 
 - ISA calls a background prompt (`prompt_classifier`) whose JSON output determines the route. Tokens of `APP` or `OOS` select **Route 1** (gpt-4.1-nano with streaming). Tokens of `CREATIVE` or `HYBRID` select **Route 2** (gpt-5-nano without streaming).
 - The classifier call is silent to end users. It always sends `store=True`, reuses a cache key, and passes the user question through prompt variables defined in secrets.
-- Route 1 uses `prompt_app`, `temperature=0.5`, `top_p=0.8`, and streaming updates. Route 2 uses the same prompt asset with `reasoning.effort="low"`, `text.verbosity="low"`, and synchronous execution.
+- Route 1 uses `prompt_app`, `temperature=0.5`, `top_p=0.8`, and streaming updates. Route 2 uses `prompt_creative` with `reasoning.effort="low"`, `text.verbosity="low"`, and synchronous execution.
 
 ### Sidebar configuration (hidden in Version 3)
 
@@ -207,9 +201,9 @@ Each response includes a **“Show raw response”** expander containing the ful
 
 ### Tool invocation
 
-ISA attaches a `file_search` tool definition to both routes (the helper disables it only if reasoning effort were set to `minimal`). The tool references a pre-built vector store (`vs_68c92dcc842c81919b9996ec34b55c2c`) and enables `include=["web_search_call.action.sources"]` to surface citation metadata in the raw JSON.
+ISA attaches a `file_search` tool definition to both routes and layers on a scoped `web_search` tool (limited to PreSonus domains) for the creative agent. The file search tool references a pre-built vector store (`vs_68c92dcc842c81919b9996ec34b55c2c`), and the creative route requests `include=["web_search_call.action.sources"]` so raw responses surface citation metadata.
 
-To disable tool usage globally, adjust the `use_file_search_tool` branch in `run_model()` or make the vector store ID configurable via secrets.
+To disable or customize tool usage, edit the `tools` list construction in `run_model()` or make the vector store ID configurable via secrets.
 
 ### Streaming vs. non-streaming execution
 
@@ -226,7 +220,7 @@ Route 1 is hard-coded to `gpt-4.1-nano` and Route 2 to `gpt-5-nano`. To adjust t
 
 - **Different vector store** – Replace the hard-coded vector store ID with one sourced from secrets.
 - **Additional tools** – Append tool definitions (e.g., function calling) inside the `params` dict in `run_model()`.
-- **Disabling tools** – Set `use_file_search_tool = False` or add a new sidebar toggle that feeds into the branch that attaches the `tools` key.
+- **Disabling tools** – Remove entries from the `tools` list inside `run_model()` or gate them behind new configuration toggles before the request is sent.
 
 ### Adapting the UI
 
@@ -241,7 +235,7 @@ Route 1 is hard-coded to `gpt-4.1-nano` and Route 2 to `gpt-5-nano`. To adjust t
 | "OpenAI API key not found" | Ensure the API key is present in `.streamlit/secrets.toml` or exported as `OPENAI_API_KEY` before launching the app. |
 | "Please enter a question" warning | The prompt textarea is empty. Enter text and click **Generate responses** again. |
 | APIConnectionError or APIError | These are upstream errors from OpenAI. Retry, verify network access, and confirm the model is enabled for your account. |
-| Default prompt fails to load | Confirm the prompt ID/version exist and that the API key has access to the Prompts API. ISA will warn and fall back to an empty textarea. |
+| Default prompt fails to load | Confirm the prompt ID exists and that the API key has access to the Prompts API. ISA will warn and fall back to an empty textarea. |
 | Unexpected streaming error | Streaming raises `response.error` events when the server aborts the stream. Review the raw JSON to diagnose; fall back to non-streaming execution if necessary. |
 
 ## Development Notes
