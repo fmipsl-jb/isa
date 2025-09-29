@@ -32,12 +32,19 @@ class RunConfig:
     top_p: Optional[float]
     reasoning_effort: Optional[str]
     verbosity: str
-    token: str
+    token: Optional[str]
+    language: Optional[str]
     agent_type: str
     conversation_id: Optional[str] = None
     previous_response_id: Optional[str] = None
     prompt_reference: Optional[Dict[str, Any]] = None
     cache_key: Optional[str] = None
+
+
+@dataclass
+class ClassifierResult:
+    token: Optional[str]
+    language: Optional[str]
 
 
 def build_client() -> OpenAI:
@@ -290,8 +297,13 @@ def run_model(
     if config.cache_key:
         params["prompt_cache_key"] = config.cache_key
 
+    metadata: Dict[str, Any] = {}
     if config.token:
-        params["metadata"] = {"token": config.token}
+        metadata["token"] = config.token
+    if config.language:
+        metadata["language"] = config.language
+    if metadata:
+        params["metadata"] = metadata
 
     if config.conversation_id:
         params["conversation"] = config.conversation_id
@@ -419,7 +431,7 @@ def strip_code_fences(text: str) -> str:
     return sanitized
 
 
-def parse_classifier_token(output_text: str) -> Optional[str]:
+def parse_classifier_response(output_text: str) -> Optional[ClassifierResult]:
     if not output_text:
         return None
 
@@ -432,14 +444,23 @@ def parse_classifier_token(output_text: str) -> Optional[str]:
     if not isinstance(payload, Mapping):
         return None
 
-    token = payload.get("token")
-    if isinstance(token, str) and token.strip():
-        return token.strip().upper()
+    token_raw = payload.get("token")
+    token: Optional[str] = None
+    if isinstance(token_raw, str) and token_raw.strip():
+        token = token_raw.strip().upper()
+
+    language_raw = payload.get("language")
+    language: Optional[str] = None
+    if isinstance(language_raw, str) and language_raw.strip():
+        language = language_raw.strip().lower()
+
+    if token or language:
+        return ClassifierResult(token=token, language=language)
 
     return None
 
 
-def classify_user_prompt(client: OpenAI, user_prompt: str) -> Optional[str]:
+def classify_user_prompt(client: OpenAI, user_prompt: str) -> Optional[ClassifierResult]:
     prompt_config = get_prompt_config("prompt_classifier")
     prompt_reference = build_prompt_reference(
         "prompt_classifier", user_prompt, config=prompt_config
@@ -465,7 +486,6 @@ def classify_user_prompt(client: OpenAI, user_prompt: str) -> Optional[str]:
         "store": True,
         "prompt_cache_key": cache_key,
         "temperature": 0.0,
-        "metadata": {"token": "OOS"},
     }
 
     try:
@@ -475,7 +495,7 @@ def classify_user_prompt(client: OpenAI, user_prompt: str) -> Optional[str]:
 
     response_dict = response.to_dict()
     output_text = extract_output_text(response_dict)
-    return parse_classifier_token(output_text)
+    return parse_classifier_response(output_text)
 
 
 def determine_route(token: Optional[str]) -> str:
@@ -511,7 +531,8 @@ def build_route_run_config(
     previous_response_id: Optional[str],
     prompt_reference: Optional[Dict[str, Any]],
     cache_key_base: str,
-    token: str,
+    token: Optional[str],
+    language: Optional[str],
 ) -> Tuple[RunConfig, bool]:
     base = cache_key_base.strip() if cache_key_base else "isa-app"
     if not base:
@@ -528,6 +549,7 @@ def build_route_run_config(
                 reasoning_effort="low",
                 verbosity="low",
                 token=token,
+                language=language,
                 agent_type="creative",
                 conversation_id=conversation_id,
                 previous_response_id=previous_response_id,
@@ -547,6 +569,7 @@ def build_route_run_config(
             reasoning_effort="low",
             verbosity="low",
             token=token,
+            language=language,
             agent_type="app",
             conversation_id=conversation_id,
             previous_response_id=previous_response_id,
@@ -610,7 +633,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="*Staging* Intelligent Search Assistant", layout="wide")
     st.title("*Staging* Intelligent Search Assistant")
-    st.caption("version 3.0.3 (250929)")
+    st.caption("version 3.0.4 (250929)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -647,9 +670,51 @@ def main() -> None:
             st.warning("Please enter a question before generating a response.")
             st.stop()
 
-        classifier_token = classify_user_prompt(client, user_prompt)
-        route = determine_route(classifier_token)
-        metadata_token = resolve_metadata_token(route, classifier_token)
+        conversations: Dict[str, Any] = st.session_state["conversations"]
+        active_model = st.session_state.get("active_model")
+        conversation_state: Dict[str, Any] = {}
+        metadata_token: Optional[str] = None
+        metadata_language: Optional[str] = None
+        route: str
+        target_model: str
+
+        if isinstance(active_model, str):
+            state_entry = conversations.get(active_model)
+            if (
+                isinstance(state_entry, dict)
+                and (
+                    state_entry.get("conversation_id")
+                    or state_entry.get("previous_response_id")
+                )
+            ):
+                conversation_state = state_entry
+                target_model = active_model
+                route = state_entry.get("route") or (
+                    "route_2" if active_model != "gpt-4.1-nano" else "route_1"
+                )
+                metadata_token = state_entry.get("token")
+                metadata_language = state_entry.get("language")
+            else:
+                target_model = ""
+                route = "route_1"
+        else:
+            target_model = ""
+            route = "route_1"
+
+        continuing_conversation = bool(conversation_state)
+
+        if not continuing_conversation:
+            classifier_result = classify_user_prompt(client, user_prompt)
+            classifier_token = classifier_result.token if classifier_result else None
+            route = determine_route(classifier_token)
+            metadata_token = resolve_metadata_token(route, classifier_token)
+            metadata_language = (
+                classifier_result.language if classifier_result else None
+            )
+            target_model = "gpt-4.1-nano" if route == "route_1" else "gpt-5-nano"
+            conversation_state = {}
+
+        metadata_token = metadata_token or resolve_metadata_token(route, None)
 
         prompt_config_name = "prompt_app" if route == "route_1" else "prompt_creative"
         prompt_config = get_prompt_config(prompt_config_name)
@@ -662,15 +727,11 @@ def main() -> None:
             str(cache_key_raw).strip() if cache_key_raw else default_cache_key
         ) or default_cache_key
 
-        target_model = "gpt-4.1-nano" if route == "route_1" else "gpt-5-nano"
-        conversation_state = st.session_state["conversations"].get(target_model)
         conversation_id: Optional[str] = None
         previous_response_id: Optional[str] = None
-        if isinstance(conversation_state, dict):
+        if conversation_state:
             conversation_id = conversation_state.get("conversation_id")
             previous_response_id = conversation_state.get("previous_response_id")
-        elif isinstance(conversation_state, str):
-            conversation_id = conversation_state or None
 
         run_config, stream_enabled = build_route_run_config(
             route,
@@ -681,6 +742,7 @@ def main() -> None:
             prompt_reference=prompt_reference,
             cache_key_base=cache_key_base,
             token=metadata_token,
+            language=metadata_language,
         )
 
         st.session_state["active_model"] = target_model
@@ -724,17 +786,17 @@ def main() -> None:
             output_placeholder.markdown("_No output text was returned._")
 
         conversation_identifier = extract_conversation_id(response)
-        existing_state: Dict[str, Optional[str]] = {}
-        state_entry = st.session_state["conversations"].get(target_model)
-        if isinstance(state_entry, dict):
-            existing_state = state_entry
-        elif isinstance(state_entry, str) and state_entry:
-            existing_state = {"conversation_id": state_entry}
+        existing_state: Dict[str, Any] = {}
+        if continuing_conversation and isinstance(conversation_state, dict):
+            existing_state = conversation_state
 
-        new_state: Dict[str, Optional[str]] = {
+        new_state: Dict[str, Any] = {
             "conversation_id": conversation_identifier
             or existing_state.get("conversation_id"),
             "previous_response_id": response.get("id"),
+            "route": route,
+            "token": metadata_token or existing_state.get("token"),
+            "language": metadata_language or existing_state.get("language"),
         }
         st.session_state["conversations"][target_model] = new_state
 
