@@ -32,10 +32,12 @@ class RunConfig:
     top_p: Optional[float]
     reasoning_effort: Optional[str]
     verbosity: str
+    token: str
+    agent_type: str
     conversation_id: Optional[str] = None
     previous_response_id: Optional[str] = None
     prompt_reference: Optional[Dict[str, Any]] = None
-    cache_key: str = "isa-poc"
+    cache_key: Optional[str] = None
 
 
 def build_client() -> OpenAI:
@@ -155,14 +157,9 @@ def load_default_user_prompt(client: OpenAI) -> str:
     if not prompt_id:
         return ""
 
-    prompt_version_raw = prompts_section.get("default_user_prompt_version", "6")
-    prompt_version = str(prompt_version_raw).strip()
-    if not prompt_version:
-        prompt_version = "8"
-
     try:
         prompt_data: Dict[str, Any] = client.get(
-            f"/prompts/{prompt_id}/versions/{prompt_version}",
+            f"/prompts/{prompt_id}",
             cast_to=dict,
         )
     except Exception as error:  # pylint: disable=broad-except
@@ -221,11 +218,6 @@ def build_prompt_reference(
         return None
 
     prompt_reference: Dict[str, Any] = {"id": prompt_id}
-
-    prompt_version_raw = prompt_config.get("version")
-    prompt_version = str(prompt_version_raw).strip() if prompt_version_raw else ""
-    if prompt_version:
-        prompt_reference["version"] = prompt_version
 
     variable_candidates = (
         prompt_config.get("variable_names")
@@ -293,8 +285,13 @@ def run_model(
             config.verbosity if supports_reasoning_and_verbosity else None
         ),
         "store": True,
-        "prompt_cache_key": config.cache_key,
     }
+
+    if config.cache_key:
+        params["prompt_cache_key"] = config.cache_key
+
+    if config.token:
+        params["metadata"] = {"token": config.token}
 
     if config.conversation_id:
         params["conversation"] = config.conversation_id
@@ -304,18 +301,31 @@ def run_model(
     if config.prompt_reference:
         params["prompt"] = config.prompt_reference
 
-    use_file_search_tool = True
-    if supports_reasoning_and_verbosity and config.reasoning_effort == "minimal":
-        use_file_search_tool = False
-
-    if use_file_search_tool:
-        params["tools"] = [
+    tools: List[Dict[str, Any]] = []
+    if config.agent_type in {"app", "creative"}:
+        tools.append(
             {
                 "type": "file_search",
                 "vector_store_ids": ["vs_68c92dcc842c81919b9996ec34b55c2c"],
             }
-        ]
+        )
+
+    if config.agent_type == "creative":
+        tools.append(
+            {
+                "type": "web_search",
+                "filters": {
+                    "allowed_domains": [
+                        "support.presonus.com",
+                        "www.presonus.com",
+                    ]
+                },
+            }
+        )
         params["include"] = ["web_search_call.action.sources"]
+
+    if tools:
+        params["tools"] = tools
         params["tool_choice"] = "auto"
 
     if config.top_p is not None and model_supports_top_p(config.model):
@@ -455,6 +465,7 @@ def classify_user_prompt(client: OpenAI, user_prompt: str) -> Optional[str]:
         "store": True,
         "prompt_cache_key": cache_key,
         "temperature": 0.0,
+        "metadata": {"token": "OOS"},
     }
 
     try:
@@ -480,6 +491,17 @@ def determine_route(token: Optional[str]) -> str:
     return "route_1"
 
 
+def resolve_metadata_token(route: str, token: Optional[str]) -> str:
+    allowed = {"APP", "CREATIVE", "HYBRID", "OOS"}
+    if token and token.strip().upper() in allowed:
+        normalized = token.strip().upper()
+        if route == "route_2" and normalized == "APP":
+            return "CREATIVE"
+        return normalized
+
+    return "CREATIVE" if route == "route_2" else "APP"
+
+
 def build_route_run_config(
     route: str,
     user_prompt: str,
@@ -489,6 +511,7 @@ def build_route_run_config(
     previous_response_id: Optional[str],
     prompt_reference: Optional[Dict[str, Any]],
     cache_key_base: str,
+    token: str,
 ) -> Tuple[RunConfig, bool]:
     base = cache_key_base.strip() if cache_key_base else "isa-app"
     if not base:
@@ -504,6 +527,8 @@ def build_route_run_config(
                 top_p=None,
                 reasoning_effort="low",
                 verbosity="low",
+                token=token,
+                agent_type="creative",
                 conversation_id=conversation_id,
                 previous_response_id=previous_response_id,
                 prompt_reference=prompt_reference,
@@ -521,6 +546,8 @@ def build_route_run_config(
             top_p=0.8,
             reasoning_effort="low",
             verbosity="low",
+            token=token,
+            agent_type="app",
             conversation_id=conversation_id,
             previous_response_id=previous_response_id,
             prompt_reference=prompt_reference,
@@ -650,7 +677,7 @@ def render_sidebar() -> Dict[str, Any]:
 def main() -> None:
     st.set_page_config(page_title="*Staging* Intelligent Search Assistant", layout="wide")
     st.title("*Staging* Intelligent Search Assistant")
-    st.caption("version 3.0.0 (250929)")
+    st.caption("version 3.0.2 (250929)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -689,15 +716,18 @@ def main() -> None:
 
         classifier_token = classify_user_prompt(client, user_prompt)
         route = determine_route(classifier_token)
+        metadata_token = resolve_metadata_token(route, classifier_token)
 
-        prompt_app_config = get_prompt_config("prompt_app")
+        prompt_config_name = "prompt_app" if route == "route_1" else "prompt_creative"
+        prompt_config = get_prompt_config(prompt_config_name)
         prompt_reference = build_prompt_reference(
-            "prompt_app", user_prompt, config=prompt_app_config
+            prompt_config_name, user_prompt, config=prompt_config
         )
-        cache_key_raw = prompt_app_config.get("cache_key")
+        cache_key_raw = prompt_config.get("cache_key")
+        default_cache_key = "isa-app" if route == "route_1" else "isa-creative"
         cache_key_base = (
-            str(cache_key_raw).strip() if cache_key_raw else "isa-app"
-        ) or "isa-app"
+            str(cache_key_raw).strip() if cache_key_raw else default_cache_key
+        ) or default_cache_key
 
         target_model = "gpt-4.1-nano" if route == "route_1" else "gpt-5-nano"
         conversation_state = st.session_state["conversations"].get(target_model)
@@ -717,6 +747,7 @@ def main() -> None:
             previous_response_id=previous_response_id,
             prompt_reference=prompt_reference,
             cache_key_base=cache_key_base,
+            token=metadata_token,
         )
 
         st.session_state["active_model"] = target_model
