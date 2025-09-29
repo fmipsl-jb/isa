@@ -610,7 +610,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="*Staging* Intelligent Search Assistant", layout="wide")
     st.title("*Staging* Intelligent Search Assistant")
-    st.caption("version 3.0.2 (250929)")
+    st.caption("version 3.0.3 (250929)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
