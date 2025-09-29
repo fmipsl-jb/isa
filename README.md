@@ -116,7 +116,6 @@ cache_key = "isa-creative"
 [prompts.prompt_classifier]
 id = "prompt_classifier_id"
 variable_names = ["user_input"]
-model = "gpt-4.1-mini"
 cache_key = "isa-classifier"
 ```
 
