@@ -367,10 +367,20 @@ def render_sidebar() -> Dict[str, Any]:
     #         models.append(custom_model)
 
     temperature = st.sidebar.slider(
-        "Temperature", min_value=0.0, max_value=2.0, value=0.5, step=0.1
+        "Temperature",
+        min_value=0.0,
+        max_value=2.0,
+        value=0.5,
+        step=0.1,
+        help="Adjusts randomness when sampling tokens. Higher values increase variety while lower values make responses more deterministic.",
     )
     top_p = st.sidebar.slider(
-        "Top P", min_value=0.0, max_value=1.0, value=0.8, step=0.05
+        "Top P",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.8,
+        step=0.05,
+        help="Controls nucleus sampling by limiting choices to the most probable tokens whose cumulative probability stays under this threshold.",
     )
     reasoning_options = ["minimal", "low", "medium", "high"]
     reasoning_effort = st.sidebar.selectbox(
