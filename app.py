@@ -522,6 +522,21 @@ def resolve_metadata_token(route: str, token: Optional[str]) -> str:
     return "CREATIVE" if route == "route_2" else "APP"
 
 
+def append_language_to_prompt(user_prompt: str, language: Optional[str]) -> str:
+    """Return the prompt combined with the detected language when available."""
+
+    sanitized_prompt = user_prompt.strip()
+    sanitized_language = language.strip() if isinstance(language, str) else ""
+
+    if not sanitized_language:
+        return sanitized_prompt
+
+    if not sanitized_prompt:
+        return f"[language: {sanitized_language}]"
+
+    return f"[language: {sanitized_language}] {sanitized_prompt}"
+
+
 def build_route_run_config(
     route: str,
     user_prompt: str,
@@ -554,7 +569,7 @@ def build_route_run_config(
                 conversation_id=conversation_id,
                 previous_response_id=previous_response_id,
                 prompt_reference=prompt_reference,
-                cache_key=f"{base}-route-2",
+                cache_key=base,
             ),
             False,
         )
@@ -574,7 +589,7 @@ def build_route_run_config(
             conversation_id=conversation_id,
             previous_response_id=previous_response_id,
             prompt_reference=prompt_reference,
-            cache_key=f"{base}-route-1",
+            cache_key=base,
         ),
         True,
     )
@@ -633,7 +648,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="*Staging* Intelligent Search Assistant", layout="wide")
     st.title("*Staging* Intelligent Search Assistant")
-    st.caption("version 3.0.4 (250929)")
+    st.caption("version 3.0.5 (250930)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -718,8 +733,9 @@ def main() -> None:
 
         prompt_config_name = "prompt_app" if route == "route_1" else "prompt_creative"
         prompt_config = get_prompt_config(prompt_config_name)
+        prompt_for_model = append_language_to_prompt(user_prompt, metadata_language)
         prompt_reference = build_prompt_reference(
-            prompt_config_name, user_prompt, config=prompt_config
+            prompt_config_name, prompt_for_model, config=prompt_config
         )
         cache_key_raw = prompt_config.get("cache_key")
         default_cache_key = "isa-app" if route == "route_1" else "isa-creative"
@@ -735,7 +751,7 @@ def main() -> None:
 
         run_config, stream_enabled = build_route_run_config(
             route,
-            user_prompt,
+            prompt_for_model,
             developer_prompt,
             conversation_id=conversation_id,
             previous_response_id=previous_response_id,
