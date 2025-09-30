@@ -1,4 +1,4 @@
-"""*Staging* Intelligent Search Assistant"""
+"""Intelligent Search Assistant"""
 
 from __future__ import annotations
 
@@ -646,9 +646,9 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 
 
 def main() -> None:
-    st.set_page_config(page_title="*Staging* Intelligent Search Assistant", layout="wide")
-    st.title("*Staging* Intelligent Search Assistant")
-    st.caption("version 3.0.5 (250930)")
+    st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")
+    st.title("Intelligent Search Assistant")
+    st.caption("version 3.0.6 (250930)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
