@@ -1,246 +1,148 @@
-# Intelligent Search Assistant (ISA)
+# Intelligent Search Assistant
 
-The Intelligent Search Assistant is a Streamlit-based workbench for experimenting with the OpenAI Responses API. Version 2 adds streaming output, built-in tool calls, and first-class support for prompt assets so that teams can evaluate models and prompts in a workflow that mirrors production integrations. This README is intended to give a developer everything they need to understand how the app works, how to configure it, and how to adapt it for real-world deployments.
+The Intelligent Search Assistant (ISA) is a Streamlit workbench for exploring OpenAI's Responses API with routing, prompt management, and inspection tools aimed at product and support teams. The app mirrors a production-style integration while keeping the code path compact enough to iterate locally.
 
 ---
 
-## Table of Contents
-- [High-Level Overview](#high-level-overview)
-- [System Architecture](#system-architecture)
-- [Key Features](#key-features)
+## Contents
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
-- [Installation](#installation)
+- [Setup](#setup)
 - [Configuration](#configuration)
-  - [Secrets file](#secrets-file)
+  - [Streamlit secrets](#streamlit-secrets)
   - [Environment variables](#environment-variables)
-  - [Optional prompt defaults](#optional-prompt-defaults)
-- [Running the Application](#running-the-application)
-  - [Local development](#local-development)
-  - [Streamlit Community Cloud](#streamlit-community-cloud)
-- [Using ISA](#using-isa)
-  - [Main workspace](#main-workspace)
-  - [Automatic routing](#automatic-routing)
-  - [Sidebar configuration (hidden in Version 3)](#sidebar-configuration-hidden-in-version-3)
-  - [Real-time streaming](#real-time-streaming)
-  - [Inspecting raw responses](#inspecting-raw-responses)
-- [How the Response Pipeline Works](#how-the-response-pipeline-works)
-  - [Message construction](#message-construction)
-  - [Model-specific controls](#model-specific-controls)
-  - [Tool invocation](#tool-invocation)
-  - [Streaming vs. non-streaming execution](#streaming-vs-non-streaming-execution)
-- [Customization Guide](#customization-guide)
-  - [Supported models](#supported-models)
-  - [Adjusting tool usage](#adjusting-tool-usage)
-  - [Adapting the UI](#adapting-the-ui)
+  - [Prompt defaults](#prompt-defaults)
+- [Running the app](#running-the-app)
+- [Using the interface](#using-the-interface)
+  - [Conversation flow](#conversation-flow)
+  - [Routing behaviour](#routing-behaviour)
+  - [Streaming and responses](#streaming-and-responses)
+  - [Tools and metadata](#tools-and-metadata)
+- [Customization guide](#customization-guide)
 - [Troubleshooting](#troubleshooting)
-- [Development Notes](#development-notes)
-- [Future Enhancements](#future-enhancements)
+- [Development notes](#development-notes)
 
 ---
 
-## High-Level Overview
+## Overview
+ISA provides an interactive console for evaluating how different prompts and models respond to user questions. It loads optional developer and user prompts, classifies each query to choose the best route, and exposes both rendered answers and the underlying JSON response. The intent is to accelerate prompt iteration while maintaining visibility into the request payloads a production system would send.
 
-ISA is a diagnostic interface for OpenAI's Responses API. It enables product and ML teams to:
+## Features
+- **Automatic routing** – A lightweight classifier evaluates each question and selects a deterministic or creative route before contacting the main model.
+- **Prompt asset support** – Optional integration with the OpenAI Prompts API keeps default text in sync with centrally managed prompt assets.
+- **Streaming viewer** – Models that support streaming display token-level updates; synchronous models appear once complete.
+- **Tool integration** – Requests can include file search and web search tools, making it easy to experiment with retrieval-augmented responses.
+- **Raw payload inspector** – Every run stores the full JSON payload in an expander so you can review usage, tool calls, and metadata.
+- **Session awareness** – ISA preserves conversation state per model so follow-up questions stay in context when supported by the API.
 
-- Automatically route each question between deterministic application handling (Route 1) and a creative path (Route 2) based on a background classifier.
-- Prototype prompt changes quickly with automatic retrieval of saved prompt assets.
-- Observe the raw JSON payloads that would be returned to a production caller, including tool call metadata.
-- Share reproducible experiments with other stakeholders (Streamlit retains control state between reruns).
+## Architecture
+The application is a single Streamlit page defined in `app.py`:
+1. **Client bootstrap** – `build_client()` resolves the OpenAI API key from Streamlit secrets or the `OPENAI_API_KEY` environment variable.
+2. **Prompt loading** – `load_default_user_prompt()` and `load_developer_prompt()` pull optional defaults from secrets or the Prompts API.
+3. **Classification** – `classify_user_prompt()` runs a prompt-based classifier to determine the route and metadata for the upcoming request.
+4. **Run configuration** – `build_route_run_config()` selects the target model, decoding parameters, and prompt reference for each route.
+5. **Execution** – `run_model()` sends the Responses API request, handles streaming callbacks, and normalizes the output text.
+6. **UI rendering** – Streamlit widgets display the request form, track active conversations, and surface raw responses for inspection.
 
-The application is intentionally thin—it does not persist conversations or user data—but it mirrors how a production system would construct requests, manage secrets, and toggle model-specific options.
-
-## System Architecture
-
-ISA is a single-page Streamlit application built around the `app.py` entry point. Key components include:
-
-1. **Client initialization** – `build_client()` resolves an API key from Streamlit secrets or the `OPENAI_API_KEY` environment variable and instantiates the `OpenAI` client.
-2. **Classifier routing** – `classify_user_prompt()` selects the route (and therefore model/parameters) based on a managed prompt asset.
-3. **Prompt preparation** – `load_default_user_prompt()` optionally fetches a saved prompt from the OpenAI Prompts API, while `load_developer_prompt()` loads a developer/system message from secrets.
-4. **Execution engine** – `run_model()` constructs the request payload, handles streaming callbacks, and normalizes the returned text and JSON for presentation.
-5. **UI rendering** – Streamlit widgets display response text and provide an expandable JSON inspector per model.
-
-This layout keeps business logic in `app.py` while leveraging Streamlit for layout and state management. There are no additional microservices or background workers.
-
-## Key Features
-
-- **Automatic routing** – A background classifier selects Route 1 (gpt-4.1-nano with streaming) for deterministic application responses or Route 2 (gpt-5-nano without streaming) for creative needs.
-- **Managed prompt defaults** – Automatically hydrate the main textarea with content retrieved from the latest version of a managed prompt asset.
-- **Prompt-level caching and storage** – All requests send `store=True` and reuse prompt cache keys so calls show up in the console history while benefiting from caching.
-- **Integrated agent tools** – Automatically attach the OpenAI `file_search` tool for grounded answers on every route and enable a scoped `web_search` tool for creative responses.
-- **Streaming output where supported** – Route 1 streams token deltas live in the UI, while Route 2 completes synchronously for GPT-5 models.
-- **Raw response explorer** – Inspect metadata such as latency, usage, and tool call transcripts inside an expandable panel.
-- **Graceful validation** – Inline warnings prevent empty prompts or missing API keys from triggering API requests.
+There are no background services or databases; all state lives in Streamlit's session state.
 
 ## Prerequisites
+- Python **3.9 or newer**.
+- An OpenAI account with access to the Responses API and the models you intend to test.
+- Network access to `api.openai.com`.
 
-- Python **3.9+** (Streamlit Cloud currently ships Python 3.9; Python 3.10 and 3.11 also work locally).
-- An OpenAI account with access to the **Responses API** and the models you intend to test (`gpt-4.1`, `gpt-4o`, `gpt-5`, etc.).
-- Network access to `api.openai.com` from the environment running the app.
+## Setup
+Clone the repository and install dependencies. A virtual environment is recommended:
 
-## Installation
-
-1. Clone or download this repository.
-2. (Recommended) Create and activate a virtual environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # Windows: .venv\Scripts\activate
-   ```
-3. Install the dependencies:
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows use .venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
 
 ## Configuration
+ISA reads configuration from Streamlit's secrets and from environment variables. Populate only the values required for your workflows—avoid storing sensitive keys directly in the repository.
 
-ISA expects configuration to live in Streamlit secrets or environment variables. The Streamlit secrets approach is preferred because it also works seamlessly on Streamlit Community Cloud.
-
-### Secrets file
-
-Create `.streamlit/secrets.toml` at the project root (see `.streamlit/secrets.example.toml` for a complete template):
+### Streamlit secrets
+Create a `.streamlit/secrets.toml` file alongside `app.py`. At minimum provide your OpenAI key and any prompt metadata you plan to use:
 
 ```toml
 [openai]
-api_key = "sk-your-api-key"
+api_key = "YOUR_OPENAI_KEY"
 
-[prompts.prompt_app]
-id = "prompt_app_id"
-variable_names = ["user_input"]
-cache_key = "isa-app"
-
-[prompts.prompt_creative]
-id = "prompt_creative_id"
-variable_names = ["user_input"]
-cache_key = "isa-creative"
-
-[prompts.prompt_classifier]
-id = "prompt_classifier_id"
-variable_names = ["user_input"]
-cache_key = "isa-classifier"
+[prompts]
+# Optional: default_user_prompt_id = "prompt-id-from-openai"
+# Optional: developer_prompt = "Initial system/developer instructions"
+# Optional: prompt_app.id = "prompt-asset-id"
+# Optional: prompt_creative.id = "another-prompt-asset-id"
 ```
+
+Only store placeholder values in version control. Real keys should be added in your deployment environment or ignored via `.gitignore`.
 
 ### Environment variables
-
-If you cannot use Streamlit secrets, export environment variables before launching Streamlit:
+If Streamlit secrets are not available, set `OPENAI_API_KEY` before launching the app:
 
 ```bash
-export OPENAI_API_KEY="sk-your-api-key"
+export OPENAI_API_KEY="YOUR_OPENAI_KEY"
 ```
 
-Environment variables take precedence only when the associated value is not present in Streamlit secrets. You can easily modify `load_default_user_prompt()` to check for additional environment-based overrides if needed.
+Environment variables can also be useful for local development when you prefer not to create a secrets file.
 
-### Optional prompt defaults
+### Prompt defaults
+Prompt configurations under `[prompts]` allow you to associate prompt asset IDs, cache keys, variable mappings, and other metadata with the app. ISA will pass the active user question into any configured variables. Refer to `get_prompt_config()` in `app.py` for the supported fields.
 
-Optionally, you can add a `[prompts]` block to control how the main textarea and the developer instructions are pre-populated:
-
-- `developer_prompt` – Injected as a developer message (`role="developer"`) before each user prompt. Use this to enforce tone, format, or tool instructions.
-- `default_user_prompt_id` – Identifier of a saved prompt asset in the OpenAI Prompts API. When set, ISA fetches the prompt during page load.
-
-The nested tables `[prompts.prompt_app]`, `[prompts.prompt_creative]`, and `[prompts.prompt_classifier]` configure the prompt assets and cache keys used for each agent. Provide the prompt IDs and variable names expected by every prompt. Cache keys are optional but recommended to keep call history organized.
-
-If the Prompts API call fails or returns no textual content, ISA surfaces a warning and the textarea falls back to an empty string.
-
-## Running the Application
-
-### Local development
-
+## Running the app
 Launch Streamlit from the repository root:
 
 ```bash
 streamlit run app.py
 ```
 
-Streamlit will display a local URL (typically `http://localhost:8501`). Keep the terminal session open while using the app.
+Streamlit will output a local URL (typically `http://localhost:8501`). Keep the terminal open while using the interface. When deploying to Streamlit Community Cloud or another hosting provider, ensure your secrets and environment variables are configured in that environment.
 
-### Streamlit Community Cloud
+## Using the interface
+### Conversation flow
+1. Enter a question in the **User question** text area. If a default user prompt is configured, it will appear automatically.
+2. Select your digital audio workstation (DAW) version from the dropdown. ISA stores the selection with the conversation so follow-up messages stay consistent.
+3. Click **Generate responses** to submit the query.
+4. Review the assistant reply and open the **Show raw response** expander to inspect the full payload.
 
-1. Push this repository to GitHub (or another Git provider supported by Streamlit).
-2. In Streamlit Cloud, create a new app targeting `app.py`.
-3. In **App settings → Secrets**, paste the content of your `.streamlit/secrets.toml`.
-4. Deploy. Streamlit Cloud will install dependencies from `requirements.txt` and boot the app automatically.
+### Routing behaviour
+- The classifier prompt assigns a token such as `APP` or `CREATIVE`. ISA maps that token to one of two routes.
+- Route 1 targets a deterministic model (default: `gpt-4.1-nano`) with streaming enabled.
+- Route 2 targets a higher-capability model (default: `gpt-5-nano`) with reasoning controls and synchronous delivery.
+- Conversations stick to the route and model chosen for the first message unless you manually reset the session state.
 
-## Using ISA
+### Streaming and responses
+- Streaming responses update the message area in real time using `client.responses.stream`.
+- Non-streaming responses display only after the API call finishes.
+- All responses are stored (`store=True`) so they appear in the OpenAI console history unless you adjust the request parameters.
 
-### Main workspace
+### Tools and metadata
+- Requests may include a file search tool and, for creative routes, a domain-scoped web search tool. Replace the placeholder tool configuration in `run_model()` with your own resource identifiers before deploying to production.
+- ISA attaches metadata such as the classifier token, detected language, and selected DAW version to each request. Adjust `resolve_metadata_token()` and related helpers to suit your own taxonomy.
 
-- **User question** – Primary textarea populated with the default prompt (if configured). Accepts Markdown; trailing whitespace is stripped before sending to the API.
-- **Generate responses** – Primary action button. Validation ensures a prompt is provided before triggering the background classifier and downstream Responses API call.
-- **Response area** – Shows the ongoing conversation for the model selected by the classifier together with the latest assistant reply.
-
-### Automatic routing
-
-- ISA calls a background prompt (`prompt_classifier`) whose JSON output determines the route. Tokens of `APP` or `OOS` select **Route 1** (gpt-4.1-nano with streaming). Tokens of `CREATIVE` or `HYBRID` select **Route 2** (gpt-5-nano without streaming).
-- The classifier call is silent to end users. It always sends `store=True`, reuses a cache key, and passes the user question through prompt variables defined in secrets.
-- Route 1 uses `prompt_app`, `temperature=0.5`, `top_p=0.8`, and streaming updates. Route 2 uses `prompt_creative` with `reasoning.effort="low"`, `text.verbosity="low"`, and synchronous execution.
-
-### Sidebar configuration (removed in Version 3)
-
-Version 3 removes the configuration sidebar entirely. The previous sliders and multi-select have been deleted from the codebase to prevent residual errors tied to the old implementation.
-
-### Real-time streaming
-
-Route 1 streams responses from `gpt-4.1-nano`. As OpenAI emits `response.output_text.delta` events, the app updates the assistant message live. Route 2 (gpt-5-nano) runs synchronously because GPT-5 models do not support streaming.
-
-### Inspecting raw responses
-
-Each response includes a **“Show raw response”** expander containing the full JSON payload returned by the Responses API. Use this to inspect tool invocations, usage metrics, reasoning traces, or content safety fields.
-
-## How the Response Pipeline Works
-
-### Message construction
-
-1. ISA builds a list of messages starting with the optional developer prompt (`role="developer"`) followed by the user prompt (`role="user"`).
-2. Every message is encoded using the `input_text` content type to mirror the canonical Responses API format.
-3. The request passes `store=True` so the interaction appears in the OpenAI console history.
-
-### Model-specific controls
-
-- Route 1 uses `gpt-4.1-nano` with `temperature=0.5` and `top_p=0.8`.
-- Route 2 uses `gpt-5-nano` with `reasoning.effort="low"` and `text.verbosity="low"`. GPT-5 models do not accept `temperature`/`top_p`, so those parameters are omitted automatically.
-
-### Tool invocation
-
-ISA attaches a `file_search` tool definition to both routes and layers on a scoped `web_search` tool (limited to PreSonus domains) for the creative agent. The file search tool references a pre-built vector store (`vs_68c92dcc842c81919b9996ec34b55c2c`), and the creative route requests `include=["web_search_call.action.sources"]` so raw responses surface citation metadata.
-
-To disable or customize tool usage, edit the `tools` list construction in `run_model()` or make the vector store ID configurable via secrets.
-
-### Streaming vs. non-streaming execution
-
-- Route 1 invokes `run_model(..., stream=True)` so the UI can display deltas while the response is being generated.
-- Route 2 invokes `run_model(..., stream=False)` and renders the full answer only after completion because GPT-5 models do not support streaming.
-
-## Customization Guide
-
-### Supported models
-
-Route 1 is hard-coded to `gpt-4.1-nano` and Route 2 to `gpt-5-nano`. To adjust the routing targets or decoding parameters, edit `build_route_run_config()` in `app.py`.
-
-### Adjusting tool usage
-
-- **Different vector store** – Replace the hard-coded vector store ID with one sourced from secrets.
-- **Additional tools** – Append tool definitions (e.g., function calling) inside the `params` dict in `run_model()`.
-- **Disabling tools** – Remove entries from the `tools` list inside `run_model()` or gate them behind new configuration toggles before the request is sent.
-
-### Adapting the UI
-
-- **Custom prompt panes** – Wrap the textarea and response columns in `st.tabs()` for multi-scenario testing.
-- **Session persistence** – Use Streamlit session state to keep a history of prompts/responses.
-- **Localization** – The placeholder text already demonstrates multilingual prompts. To localize validation messages, edit the strings inside `main()` where warnings and errors are raised.
+## Customization guide
+- **Models and parameters** – Edit `DEFAULT_MODELS` and `build_route_run_config()` to change available models, temperatures, or reasoning settings.
+- **Prompt references** – Update prompt names or variable mappings in `.streamlit/secrets.toml` to align with your managed prompt assets.
+- **Tooling** – Modify the `tools` list in `run_model()` to enable/disable retrieval or function tools, or to inject custom tool definitions.
+- **UI changes** – Streamlit components are defined in `main()`. You can reintroduce a sidebar, add tabs, or extend the layout for additional diagnostics.
 
 ## Troubleshooting
-
-| Issue | Resolution |
+| Issue | Suggested action |
 | --- | --- |
-| "OpenAI API key not found" | Ensure the API key is present in `.streamlit/secrets.toml` or exported as `OPENAI_API_KEY` before launching the app. |
-| "Please enter a question" warning | The prompt textarea is empty. Enter text and click **Generate responses** again. |
-| APIConnectionError or APIError | These are upstream errors from OpenAI. Retry, verify network access, and confirm the model is enabled for your account. |
-| Default prompt fails to load | Confirm the prompt ID exists and that the API key has access to the Prompts API. ISA will warn and fall back to an empty textarea. |
-| Unexpected streaming error | Streaming raises `response.error` events when the server aborts the stream. Review the raw JSON to diagnose; fall back to non-streaming execution if necessary. |
+| "OpenAI API key not found" | Ensure the key is set in `.streamlit/secrets.toml` or exported as `OPENAI_API_KEY` before running Streamlit. |
+| Default prompt fails to load | Confirm the prompt ID exists and that the API key has Prompts API access; ISA will fall back to an empty text area. |
+| Classifier never routes to the creative model | Inspect your classifier prompt output and adjust token mapping in `determine_route()`. |
+| Streaming stops unexpectedly | Review the raw payload for `response.error` events and consider disabling streaming for the affected model. |
+| Web search results missing | Verify that your deployment account has access to the web search tool and update the tool configuration with valid identifiers. |
 
-## Development Notes
-
-- The Streamlit page is configured via `st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")`.
-- Responses are rendered as Markdown. If models output HTML, sanitize or adjust the renderer before displaying.
-- ISA stores all responses in the OpenAI console (`store=True`). Disable this if your security policy disallows storage.
-- The developer prompt loader intentionally returns `None` when the secret is absent; `build_input_messages()` only sends the developer role when content is provided.
-- Error handling intentionally catches broad exceptions around the streaming handler to prevent the UI from locking up. Replace with more granular logging if needed.
+## Development notes
+- The page configuration is set via `st.set_page_config(page_title="Intelligent Search Assistant", layout="wide")`.
+- Markdown rendering is handled by Streamlit; sanitize or transform model outputs if you expect HTML responses.
+- Conversation state, including the active model and metadata, is stored in `st.session_state` under the `conversations` key.
+- Error handling around streaming is intentionally defensive to avoid leaving the UI in an inconsistent state during experiments.
+- Contributions are welcome via pull request. Please avoid committing secrets or proprietary identifiers.
