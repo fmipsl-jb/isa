@@ -200,7 +200,7 @@ Each response includes a **“Show raw response”** expander containing the ful
 
 ### Tool invocation
 
-ISA attaches a `file_search` tool definition to both routes and layers on a scoped `web_search` tool (limited to PreSonus domains) for the creative agent. The file search tool references a pre-built vector store (`vs_68c92dcc842c81919b9996ec34b55c2c`), and the creative route requests `include=["web_search_call.action.sources"]` so raw responses surface citation metadata.
+ISA attaches a `file_search` tool definition to both routes and layers on a scoped `web_search` tool (limited to PreSonus domains) for the creative agent. The file search tool references a pre-built vector store (`[store]`), and the creative route requests `include=["web_search_call.action.sources"]` so raw responses surface citation metadata.
 
 To disable or customize tool usage, edit the `tools` list construction in `run_model()` or make the vector store ID configurable via secrets.
 
