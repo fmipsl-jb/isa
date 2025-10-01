@@ -654,7 +654,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="Studio Pro Assistant", layout="wide")
     st.title("Studio Pro Assistant")
-    st.caption("version 3.1.0 (251001)")
+    st.caption("version 3.1.1 (251001)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -677,7 +677,7 @@ def main() -> None:
     if not isinstance(default_daw, str) or default_daw not in daw_options:
         default_daw = daw_options[0]
     daw_version = st.selectbox(
-        "DAW-Version",
+        "DAW-Version for AI-context",
         options=daw_options,
         index=daw_options.index(default_daw),
         help="Add more DAW versions by editing the `daw_options` list.",
