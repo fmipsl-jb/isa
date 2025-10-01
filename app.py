@@ -34,6 +34,7 @@ class RunConfig:
     verbosity: str
     token: Optional[str]
     language: Optional[str]
+    daw: Optional[str]
     agent_type: str
     conversation_id: Optional[str] = None
     previous_response_id: Optional[str] = None
@@ -302,6 +303,8 @@ def run_model(
         metadata["token"] = config.token
     if config.language:
         metadata["language"] = config.language
+    if config.daw:
+        metadata["daw"] = config.daw
     if metadata:
         params["metadata"] = metadata
 
@@ -548,6 +551,7 @@ def build_route_run_config(
     cache_key_base: str,
     token: Optional[str],
     language: Optional[str],
+    daw: Optional[str],
 ) -> Tuple[RunConfig, bool]:
     base = cache_key_base.strip() if cache_key_base else "isa-app"
     if not base:
@@ -565,6 +569,7 @@ def build_route_run_config(
                 verbosity="low",
                 token=token,
                 language=language,
+                daw=daw,
                 agent_type="creative",
                 conversation_id=conversation_id,
                 previous_response_id=previous_response_id,
@@ -585,6 +590,7 @@ def build_route_run_config(
             verbosity="low",
             token=token,
             language=language,
+            daw=daw,
             agent_type="app",
             conversation_id=conversation_id,
             previous_response_id=previous_response_id,
@@ -657,6 +663,27 @@ def main() -> None:
     if "active_model" not in st.session_state:
         st.session_state["active_model"] = None
 
+    # Update the `daw_options` list to support additional DAW versions in the future.
+    daw_options = [
+        "PreSonus Studio Pro 7",
+    ]
+    default_daw = st.session_state.get("selected_daw_version")
+    active_model = st.session_state.get("active_model")
+    if isinstance(active_model, str):
+        active_state = st.session_state["conversations"].get(active_model, {})
+        stored_daw = active_state.get("daw") if isinstance(active_state, Mapping) else None
+        if isinstance(stored_daw, str) and stored_daw.strip():
+            default_daw = stored_daw.strip()
+    if not isinstance(default_daw, str) or default_daw not in daw_options:
+        default_daw = daw_options[0]
+    daw_version = st.selectbox(
+        "DAW-Version",
+        options=daw_options,
+        index=daw_options.index(default_daw),
+        help="Add more DAW versions by editing the `daw_options` list.",
+    )
+    st.session_state["selected_daw_version"] = daw_version
+
     try:
         client = build_client()
     except RuntimeError:
@@ -690,6 +717,7 @@ def main() -> None:
         conversation_state: Dict[str, Any] = {}
         metadata_token: Optional[str] = None
         metadata_language: Optional[str] = None
+        metadata_daw: str = daw_version.strip()
         route: str
         target_model: str
 
@@ -709,6 +737,10 @@ def main() -> None:
                 )
                 metadata_token = state_entry.get("token")
                 metadata_language = state_entry.get("language")
+                stored_daw = state_entry.get("daw")
+                if isinstance(stored_daw, str) and stored_daw.strip():
+                    metadata_daw = stored_daw.strip()
+                    st.session_state["selected_daw_version"] = metadata_daw
             else:
                 target_model = ""
                 route = "route_1"
@@ -728,12 +760,18 @@ def main() -> None:
             )
             target_model = "gpt-4.1-nano" if route == "route_1" else "gpt-5-nano"
             conversation_state = {}
+        else:
+            # Preserve the DAW selection captured when the conversation started.
+            st.session_state["selected_daw_version"] = metadata_daw
 
         metadata_token = metadata_token or resolve_metadata_token(route, None)
 
         prompt_config_name = "prompt_app" if route == "route_1" else "prompt_creative"
         prompt_config = get_prompt_config(prompt_config_name)
-        prompt_for_model = append_language_to_prompt(user_prompt, metadata_language)
+        prompt_input = user_prompt
+        if not continuing_conversation:
+            prompt_input = f"I am using {metadata_daw}. {prompt_input}" if prompt_input else f"I am using {metadata_daw}."
+        prompt_for_model = append_language_to_prompt(prompt_input, metadata_language)
         prompt_reference = build_prompt_reference(
             prompt_config_name, prompt_for_model, config=prompt_config
         )
@@ -759,6 +797,7 @@ def main() -> None:
             cache_key_base=cache_key_base,
             token=metadata_token,
             language=metadata_language,
+            daw=metadata_daw,
         )
 
         st.session_state["active_model"] = target_model
@@ -813,6 +852,7 @@ def main() -> None:
             "route": route,
             "token": metadata_token or existing_state.get("token"),
             "language": metadata_language or existing_state.get("language"),
+            "daw": metadata_daw or existing_state.get("daw"),
         }
         st.session_state["conversations"][target_model] = new_state
 
