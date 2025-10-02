@@ -257,6 +257,23 @@ def build_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
+def _get_realtime_sessions_resource(client: OpenAI) -> Any:
+    """Return the realtime sessions resource from the OpenAI client."""
+
+    realtime = getattr(client, "realtime", None)
+    sessions = getattr(realtime, "sessions", None)
+    if sessions and hasattr(sessions, "create"):
+        return sessions
+
+    beta = getattr(client, "beta", None)
+    realtime_beta = getattr(beta, "realtime", None)
+    sessions = getattr(realtime_beta, "sessions", None) if realtime_beta else None
+    if sessions and hasattr(sessions, "create"):
+        return sessions
+
+    raise AttributeError("OpenAI client does not expose realtime.sessions")
+
+
 def _extract_client_secret(session_payload: Mapping[str, Any]) -> Optional[str]:
     candidate = session_payload.get("client_secret")
     if isinstance(candidate, str) and candidate.strip():
@@ -293,7 +310,8 @@ def create_voice_session(
     model: str = "gpt-4o-realtime-preview",
     voice: str = "verse",
 ) -> VoiceSessionMetadata:
-    session_response = client.realtime.sessions.create(
+    sessions_resource = _get_realtime_sessions_resource(client)
+    session_response = sessions_resource.create(
         model=model,
         voice=voice,
         modalities=["text", "audio"],

@@ -14,6 +14,23 @@ LOGGER = logging.getLogger(__name__)
 VOICE_SESSION_KEY = "voice_session"
 
 
+def _get_realtime_sessions_resource(client: OpenAI) -> Any:
+    """Return the realtime sessions resource from the OpenAI client."""
+
+    realtime = getattr(client, "realtime", None)
+    sessions = getattr(realtime, "sessions", None)
+    if sessions and hasattr(sessions, "create"):
+        return sessions
+
+    beta = getattr(client, "beta", None)
+    realtime_beta = getattr(beta, "realtime", None)
+    sessions = getattr(realtime_beta, "sessions", None) if realtime_beta else None
+    if sessions and hasattr(sessions, "create"):
+        return sessions
+
+    raise AttributeError("OpenAI client does not expose realtime.sessions")
+
+
 @dataclass
 class VoiceSession:
     """State for an OpenAI real-time voice session."""
@@ -85,7 +102,8 @@ def create_voice_session(client: OpenAI, model: str, voice: str) -> VoiceSession
     )
     resolved_voice = _normalize_preference(voice, key="voice", fallback="verse")
 
-    session = client.realtime.sessions.create(model=resolved_model, voice=resolved_voice)
+    sessions_resource = _get_realtime_sessions_resource(client)
+    session = sessions_resource.create(model=resolved_model, voice=resolved_voice)
     session_dict = _ensure_dict(session)
 
     session_id = session_dict.get("id")
@@ -127,7 +145,8 @@ def refresh_voice_session(
     current = get_voice_session()
     if current:
         try:
-            client.realtime.sessions.delete(current.session_id)
+            sessions_resource = _get_realtime_sessions_resource(client)
+            sessions_resource.delete(current.session_id)
         except Exception as exc:  # pragma: no cover - best effort clean-up
             LOGGER.debug("Failed to delete existing session during refresh: %s", exc)
 
@@ -147,7 +166,8 @@ def end_voice_session(client: OpenAI) -> None:
         return
 
     try:
-        client.realtime.sessions.delete(current.session_id)
+        sessions_resource = _get_realtime_sessions_resource(client)
+        sessions_resource.delete(current.session_id)
     except Exception as exc:  # pragma: no cover - best effort clean-up
         LOGGER.debug("Failed to delete voice session: %s", exc)
     finally:
