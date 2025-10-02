@@ -67,11 +67,26 @@ pip install -r requirements.txt
 ISA reads configuration from Streamlit's secrets and from environment variables. Populate only the values required for your workflows—avoid storing sensitive keys directly in the repository.
 
 ### Streamlit secrets
-Create a `.streamlit/secrets.toml` file alongside `app.py`. At minimum provide your OpenAI key and any prompt metadata you plan to use:
+Create a `.streamlit/secrets.toml` file alongside `app.py`. At minimum provide your OpenAI key and any prompt metadata you plan to use. Optional sections enable developer tooling and voice defaults:
 
 ```toml
+[app]
+# Optional: surface additional controls (voice configuration, etc.) when iterating locally.
+developer_mode = true
+
 [openai]
 api_key = "YOUR_OPENAI_KEY"
+
+[realtime]
+# Optional: defaults for realtime voice sessions.
+model = "gpt-4o-realtime-preview"
+voice = "verse"
+sample_rate_hz = 16000
+latency_mode = "default"
+ice_servers = [
+    "stun:global.stun.twilio.com:3478",
+    "turns:global.relay.metered.ca:443",
+]
 
 [prompts]
 # Optional: default_user_prompt_id = "prompt-id-from-openai"
@@ -93,6 +108,9 @@ Environment variables can also be useful for local development when you prefer n
 
 ### Prompt defaults
 Prompt configurations under `[prompts]` allow you to associate prompt asset IDs, cache keys, variable mappings, and other metadata with the app. ISA will pass the active user question into any configured variables. Refer to `get_prompt_config()` in `app.py` for the supported fields.
+
+### Realtime voice settings
+`get_realtime_config()` reads optional defaults for realtime sessions from the `[realtime]` section. Supply a model name, preferred voice, sample rate (Hz), and an array of STUN/TURN `ice_servers` URLs when deploying voice features. The UI exposes developer-only controls for these values when `[app].developer_mode` is `true` (or when the `ISA_DEVELOPER_MODE=1` environment variable is present), and validation errors are displayed before a session starts if any values are missing or malformed.
 
 ## Running the app
 Launch Streamlit from the repository root:

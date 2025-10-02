@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import json
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -21,6 +22,164 @@ DEFAULT_MODELS = [
     "gpt-5-mini",
     "gpt-5-nano",
 ]
+
+
+def coerce_boolean(value: Any) -> Optional[bool]:
+    """Attempt to coerce a value into a boolean."""
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)):
+        if value == 0:
+            return False
+        if value == 1:
+            return True
+        return None
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+
+    return None
+
+
+def is_developer_mode_enabled() -> bool:
+    """Return True when developer controls should be displayed."""
+
+    app_section = st.secrets.get("app", {})
+    if isinstance(app_section, Mapping):
+        raw_flag = app_section.get("developer_mode")
+        coerced = coerce_boolean(raw_flag)
+        if coerced is not None:
+            return coerced
+
+    env_flag = os.getenv("ISA_DEVELOPER_MODE")
+    if env_flag is not None:
+        coerced = coerce_boolean(env_flag)
+        if coerced is not None:
+            return coerced
+
+    return False
+
+
+def parse_ice_servers(value: Any) -> List[str]:
+    """Normalize ICE server definitions into a list of strings."""
+
+    if isinstance(value, str):
+        normalized = value.replace("\r", "\n")
+        entries = [
+            candidate.strip()
+            for chunk in normalized.split("\n")
+            for candidate in chunk.split(",")
+            if candidate.strip()
+        ]
+        return entries
+
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        entries: List[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                entries.append(item.strip())
+        return entries
+
+    return []
+
+
+def get_realtime_config() -> Dict[str, Any]:
+    """Retrieve realtime configuration defaults from secrets."""
+
+    defaults: Dict[str, Any] = {
+        "model": "gpt-4o-realtime-preview",
+        "voice": "verse",
+        "sample_rate_hz": 16000,
+        "latency_mode": "default",
+        "ice_servers": [],
+    }
+
+    realtime_section = st.secrets.get("realtime", {})
+    if not isinstance(realtime_section, Mapping):
+        return dict(defaults)
+
+    config = dict(defaults)
+
+    model = realtime_section.get("model")
+    if isinstance(model, str) and model.strip():
+        config["model"] = model.strip()
+
+    voice = realtime_section.get("voice")
+    if isinstance(voice, str) and voice.strip():
+        config["voice"] = voice.strip()
+
+    latency_mode = realtime_section.get("latency_mode")
+    if isinstance(latency_mode, str) and latency_mode.strip():
+        config["latency_mode"] = latency_mode.strip()
+
+    sample_rate = realtime_section.get("sample_rate_hz")
+    if isinstance(sample_rate, (int, float)):
+        sample_rate_int = int(sample_rate)
+        if sample_rate_int > 0:
+            config["sample_rate_hz"] = sample_rate_int
+    elif isinstance(sample_rate, str):
+        try:
+            sample_rate_int = int(sample_rate.strip())
+        except ValueError:
+            sample_rate_int = 0
+        if sample_rate_int > 0:
+            config["sample_rate_hz"] = sample_rate_int
+
+    ice_servers = parse_ice_servers(realtime_section.get("ice_servers"))
+    if ice_servers:
+        config["ice_servers"] = ice_servers
+
+    return config
+
+
+def is_valid_url(value: str) -> bool:
+    """Return True when the provided value resembles a URL."""
+
+    if not value or not isinstance(value, str):
+        return False
+
+    parsed = urlparse(value)
+    return bool(parsed.scheme and (parsed.netloc or parsed.path))
+
+
+def validate_realtime_config(config: Mapping[str, Any]) -> Optional[str]:
+    """Validate realtime configuration values before starting a session."""
+
+    model = config.get("model")
+    if not isinstance(model, str) or not model.strip():
+        return "Realtime model must be provided."
+
+    voice = config.get("voice")
+    if not isinstance(voice, str) or not voice.strip():
+        return "Voice must be provided."
+
+    latency_mode = config.get("latency_mode")
+    if not isinstance(latency_mode, str) or not latency_mode.strip():
+        return "Latency mode must be provided."
+
+    sample_rate = config.get("sample_rate_hz")
+    if not isinstance(sample_rate, int) or sample_rate <= 0:
+        return "Sample rate must be a positive integer."
+
+    ice_servers = config.get("ice_servers", [])
+    if not isinstance(ice_servers, Sequence) or isinstance(
+        ice_servers, (str, bytes, bytearray)
+    ):
+        return "ICE servers must be provided as a list of URLs."
+
+    for entry in ice_servers:
+        if not isinstance(entry, str) or not entry.strip():
+            return "ICE server entries cannot be empty."
+        if not is_valid_url(entry.strip()):
+            return f"ICE server '{entry}' is not a valid URL."
+
+    return None
 
 
 @dataclass
@@ -656,6 +815,35 @@ def main() -> None:
     st.title("Studio Pro Assistant")
     st.caption("version 3.1.1 (251001)")
 
+    developer_mode = is_developer_mode_enabled()
+    realtime_config = get_realtime_config()
+    stored_realtime = st.session_state.get("realtime_config")
+    if isinstance(stored_realtime, Mapping):
+        stored_model = stored_realtime.get("model")
+        if isinstance(stored_model, str) and stored_model.strip():
+            realtime_config["model"] = stored_model.strip()
+        stored_voice = stored_realtime.get("voice")
+        if isinstance(stored_voice, str) and stored_voice.strip():
+            realtime_config["voice"] = stored_voice.strip()
+        stored_latency = stored_realtime.get("latency_mode")
+        if isinstance(stored_latency, str) and stored_latency.strip():
+            realtime_config["latency_mode"] = stored_latency.strip()
+        stored_rate = stored_realtime.get("sample_rate_hz")
+        if isinstance(stored_rate, int) and stored_rate > 0:
+            realtime_config["sample_rate_hz"] = stored_rate
+        stored_ice = stored_realtime.get("ice_servers")
+        if isinstance(stored_ice, Sequence) and not isinstance(
+            stored_ice, (bytes, bytearray, str)
+        ):
+            realtime_config["ice_servers"] = [
+                entry.strip()
+                for entry in stored_ice
+                if isinstance(entry, str) and entry.strip()
+            ]
+
+    if "realtime_config" not in st.session_state:
+        st.session_state["realtime_config"] = dict(realtime_config)
+
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
     if "conversation_history" not in st.session_state:
@@ -684,6 +872,69 @@ def main() -> None:
     )
     st.session_state["selected_daw_version"] = daw_version
 
+    if developer_mode:
+        st.divider()
+        st.subheader("Realtime configuration")
+        st.caption("These settings are only visible in developer mode.")
+
+        realtime_model = st.text_input(
+            "Realtime model",
+            value=realtime_config["model"],
+            help="Name of the realtime model to request when starting a voice session.",
+        )
+
+        voice_options = sorted(
+            {realtime_config["voice"], "aria", "alloy", "verse"}
+        )
+        voice_index = 0
+        if realtime_config["voice"] in voice_options:
+            voice_index = voice_options.index(realtime_config["voice"])
+        realtime_voice = st.selectbox(
+            "Voice",
+            options=voice_options,
+            index=voice_index,
+            help="Realtime voice preset used for audio synthesis.",
+        )
+
+        latency_options = ["default", "low_latency"]
+        if realtime_config["latency_mode"] not in latency_options:
+            latency_options.insert(0, realtime_config["latency_mode"])
+        latency_index = 0
+        if realtime_config["latency_mode"] in latency_options:
+            latency_index = latency_options.index(realtime_config["latency_mode"])
+        realtime_latency = st.selectbox(
+            "Latency mode",
+            options=latency_options,
+            index=latency_index,
+            help="Choose low_latency to prioritize minimal delay when supported.",
+        )
+
+        realtime_sample_rate = st.number_input(
+            "Sample rate (Hz)",
+            min_value=8000,
+            step=1000,
+            value=int(realtime_config["sample_rate_hz"]),
+            help="Audio sample rate used for microphone capture and playback.",
+        )
+
+        ice_servers_text = st.text_area(
+            "ICE servers",
+            value="\n".join(realtime_config["ice_servers"]),
+            help="Provide STUN/TURN URLs, one per line or comma separated.",
+        )
+        realtime_ice_servers = [
+            entry.strip()
+            for chunk in ice_servers_text.replace("\r", "\n").split("\n")
+            for entry in chunk.split(",")
+            if entry.strip()
+        ]
+
+        realtime_config["model"] = realtime_model.strip()
+        realtime_config["voice"] = realtime_voice.strip()
+        realtime_config["latency_mode"] = realtime_latency.strip()
+        realtime_config["sample_rate_hz"] = int(realtime_sample_rate)
+        realtime_config["ice_servers"] = realtime_ice_servers
+
     try:
         client = build_client()
     except RuntimeError:
@@ -711,6 +962,13 @@ def main() -> None:
         if not user_prompt:
             st.warning("Please enter a question before generating a response.")
             st.stop()
+
+        validation_error = validate_realtime_config(realtime_config)
+        if validation_error:
+            st.error(validation_error)
+            st.stop()
+
+        st.session_state["realtime_config"] = realtime_config
 
         conversations: Dict[str, Any] = st.session_state["conversations"]
         active_model = st.session_state.get("active_model")
