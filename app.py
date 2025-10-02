@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import os
 import json
+import base64
+import binascii
+import io
+import time
+import uuid
+import wave
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import streamlit as st
@@ -40,6 +47,9 @@ class RunConfig:
     previous_response_id: Optional[str] = None
     prompt_reference: Optional[Dict[str, Any]] = None
     cache_key: Optional[str] = None
+    mode: str = "text"
+    voice_session_id: Optional[str] = None
+    voice_role: str = "assistant"
 
 
 @dataclass
@@ -279,6 +289,9 @@ def run_model(
     stream: bool = False,
     on_text_delta: Optional[Callable[[str], None]] = None,
 ) -> Tuple[Dict[str, Any], str]:
+    if config.mode == "voice":
+        return run_voice_session(client, config, on_text_delta=on_text_delta)
+
     include_developer = not (config.conversation_id or config.previous_response_id)
     input_messages = build_input_messages(
         config.prompt,
@@ -601,25 +614,443 @@ def build_route_run_config(
     )
 
 
+def pcm_frames_to_wav(
+    frames: bytes,
+    sample_rate: int = 16000,
+    *,
+    sample_width: int = 2,
+    channels: int = 1,
+) -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(channels)
+        wav_file.setsampwidth(sample_width)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(frames)
+    return buffer.getvalue()
+
+
+def store_conversation_message(
+    model: str,
+    *,
+    role: str,
+    content: str = "",
+    mode: str = "text",
+    start: Optional[float] = None,
+    end: Optional[float] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    message: Dict[str, Any] = {
+        "role": role,
+        "content": content or "",
+        "mode": mode or "text",
+    }
+    if start is not None:
+        message["start"] = start
+    if end is not None:
+        message["end"] = end
+    for key, value in extra.items():
+        if value is not None:
+            message[key] = value
+    history_state = st.session_state.setdefault("conversation_history", {})
+    history = history_state.setdefault(model, [])
+    history.append(message)
+    return message
+
+
+def append_text_history_message(model: str, role: str, content: str) -> Dict[str, Any]:
+    timestamp = time.time()
+    return store_conversation_message(
+        model,
+        role=role,
+        content=content,
+        mode="text",
+        start=timestamp,
+        end=timestamp,
+    )
+
+
+def format_timestamp(value: Optional[float]) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        return datetime.fromtimestamp(value).strftime("%H:%M:%S")
+    except (OverflowError, ValueError):
+        return None
+
+
+def _get_active_voice_turns() -> Dict[str, Any]:
+    return st.session_state.setdefault("active_voice_turns", {})
+
+
+def _register_voice_alias(store: Dict[str, Any], alias: str) -> None:
+    if not alias:
+        return
+    active = _get_active_voice_turns()
+    aliases = store.setdefault("aliases", set())
+    if alias in aliases:
+        return
+    aliases.add(alias)
+    active[alias] = store
+
+
+def _resolve_voice_store(identifier: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not identifier:
+        return None
+    active = _get_active_voice_turns()
+    store = active.get(identifier)
+    if store:
+        return store
+    for candidate in active.values():
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("session_id") == identifier or candidate.get("response_id") == identifier:
+            return candidate
+    return None
+
+
+def start_voice_turn(
+    model: str,
+    role: str,
+    *,
+    session_id: Optional[str] = None,
+    start: Optional[float] = None,
+) -> str:
+    session_identifier = session_id or f"session-{uuid.uuid4()}"
+    start_ts = start if start is not None else time.time()
+    entry = store_conversation_message(
+        model,
+        role=role,
+        content="",
+        mode="voice",
+        start=start_ts,
+        session_id=session_identifier,
+    )
+    store = {
+        "model": model,
+        "entry": entry,
+        "transcript": "",
+        "frames": bytearray(),
+        "sample_rate": None,
+        "session_id": session_identifier,
+        "aliases": set(),
+    }
+    _register_voice_alias(store, session_identifier)
+    return session_identifier
+
+
+def set_voice_response_id(identifier: Optional[str], response_id: Optional[str]) -> None:
+    if not identifier or not response_id:
+        return
+    store = _resolve_voice_store(identifier)
+    if not store:
+        return
+    store["response_id"] = response_id
+    store["entry"]["response_id"] = response_id
+    _register_voice_alias(store, response_id)
+
+
+def append_voice_transcript(identifier: Optional[str], delta_text: Optional[str]) -> None:
+    if not identifier or not delta_text:
+        return
+    store = _resolve_voice_store(identifier)
+    if not store:
+        return
+    transcript = store.get("transcript", "") + delta_text
+    store["transcript"] = transcript
+    store["entry"]["content"] = transcript
+
+
+def append_voice_audio_chunk(
+    identifier: Optional[str],
+    encoded_chunk: Optional[str],
+    *,
+    sample_rate: Optional[int] = None,
+) -> None:
+    if not identifier or not encoded_chunk:
+        return
+    store = _resolve_voice_store(identifier)
+    if not store:
+        return
+    try:
+        chunk_bytes = base64.b64decode(encoded_chunk)
+    except (binascii.Error, ValueError):
+        return
+    frames: bytearray = store.setdefault("frames", bytearray())
+    frames.extend(chunk_bytes)
+    if sample_rate:
+        store["sample_rate"] = sample_rate
+
+
+def finalize_voice_turn(
+    identifier: Optional[str],
+    *,
+    response_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    end: Optional[float] = None,
+    sample_width: int = 2,
+    channels: int = 1,
+) -> Optional[Dict[str, Any]]:
+    store = _resolve_voice_store(identifier)
+    if not store:
+        return None
+    active = _get_active_voice_turns()
+    for alias in list(store.get("aliases", set())):
+        active.pop(alias, None)
+    entry = store.get("entry", {})
+    if response_id:
+        entry["response_id"] = response_id
+        store["response_id"] = response_id
+    if session_id:
+        entry["session_id"] = session_id
+    entry["end"] = end if end is not None else time.time()
+    transcript = store.get("transcript", "").strip()
+    if transcript:
+        entry["content"] = transcript
+    frames = store.get("frames")
+    sample_rate = store.get("sample_rate") or 16000
+    if frames:
+        audio_bytes = pcm_frames_to_wav(
+            bytes(frames),
+            sample_rate=sample_rate,
+            sample_width=sample_width,
+            channels=channels,
+        )
+        entry["audio"] = audio_bytes
+        entry["audio_format"] = "audio/wav"
+        audio_key = entry.get("audio_key")
+        if not audio_key:
+            base_key = entry.get("session_id") or identifier or str(uuid.uuid4())
+            suffix = response_id or str(uuid.uuid4())
+            audio_key = f"{base_key}:{suffix}"
+            entry["audio_key"] = audio_key
+        st.session_state.setdefault("voice_recordings", {})[audio_key] = audio_bytes
+    return entry
+
+
+def process_realtime_delta_event(event: Mapping[str, Any]) -> None:
+    event_type = event.get("type") if isinstance(event, Mapping) else None
+    if event_type == "response.output_text.delta":
+        response = event.get("response") or {}
+        response_id = response.get("id") or event.get("response_id")
+        session = response.get("session") or {}
+        session_id = session.get("id") or response.get("session_id") or event.get("session_id")
+        delta = event.get("delta")
+        delta_text: Optional[str] = None
+        if isinstance(delta, str):
+            delta_text = delta
+        elif isinstance(delta, Mapping):
+            text_value = delta.get("text")
+            if isinstance(text_value, str):
+                delta_text = text_value
+        identifier = response_id or session_id
+        if identifier:
+            append_voice_transcript(identifier, delta_text)
+    elif event_type == "response.output_audio.delta":
+        response = event.get("response") or {}
+        response_id = response.get("id") or event.get("response_id")
+        session = response.get("session") or {}
+        session_id = session.get("id") or response.get("session_id") or event.get("session_id")
+        delta = event.get("delta") or {}
+        encoded = delta.get("audio") or delta.get("pcm")
+        sample_rate = delta.get("sample_rate")
+        identifier = response_id or session_id
+        if identifier:
+            append_voice_audio_chunk(identifier, encoded, sample_rate=sample_rate)
+    elif event_type == "response.created":
+        response = event.get("response") or {}
+        response_id = response.get("id") or event.get("response_id")
+        session = response.get("session") or {}
+        session_id = session.get("id") or response.get("session_id")
+        identifier = session_id or response_id
+        if identifier and response_id:
+            set_voice_response_id(identifier, response_id)
+
+
+def process_realtime_completed_event(event: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(event, Mapping):
+        return None
+    response = event.get("response") or {}
+    response_id = response.get("id") or event.get("response_id")
+    session = response.get("session") or {}
+    session_id = session.get("id") or response.get("session_id") or event.get("session_id")
+    identifier = response_id or session_id
+    if not identifier:
+        return None
+    return finalize_voice_turn(
+        identifier,
+        response_id=response_id,
+        session_id=session_id,
+        end=time.time(),
+    )
+
+
+def attach_realtime_event_listeners(data_channel: Any) -> None:
+    if data_channel is None or not hasattr(data_channel, "on"):
+        return
+
+    def _handle_message(message: Any) -> None:
+        payload: Any = message
+        if isinstance(message, bytes):
+            try:
+                payload = message.decode("utf-8")
+            except UnicodeDecodeError:
+                return
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                return
+        if not isinstance(payload, Mapping):
+            return
+        queue = st.session_state.setdefault("realtime_event_queue", [])
+        queue.append(payload)
+        event_type = payload.get("type") if isinstance(payload, Mapping) else None
+        if event_type == "response.completed":
+            entry = process_realtime_completed_event(payload)
+            if entry is not None:
+                payload["_entry"] = entry
+        else:
+            process_realtime_delta_event(payload)
+
+    try:
+        data_channel.on("message", _handle_message)
+    except Exception:  # pylint: disable=broad-except
+        return
+
+
+def run_voice_session(
+    client: OpenAI,  # pylint: disable=unused-argument
+    config: RunConfig,
+    *,
+    on_text_delta: Optional[Callable[[str], None]] = None,
+) -> Tuple[Dict[str, Any], str]:
+    session_identifier = config.voice_session_id
+    if session_identifier:
+        store = _resolve_voice_store(session_identifier)
+        if not store:
+            session_identifier = start_voice_turn(
+                config.model,
+                config.voice_role,
+                session_id=session_identifier,
+            )
+    else:
+        session_identifier = start_voice_turn(config.model, config.voice_role)
+
+    queue = st.session_state.get("realtime_event_queue", [])
+    response_payload: Dict[str, Any] = {}
+    transcript = ""
+    processed_indices: List[int] = []
+    completed_event: Optional[Mapping[str, Any]] = None
+
+    for index, event in enumerate(list(queue)):
+        if not isinstance(event, Mapping):
+            processed_indices.append(index)
+            continue
+        event_type = event.get("type")
+        if event_type in {
+            "response.output_text.delta",
+            "response.output_audio.delta",
+            "response.created",
+        }:
+            process_realtime_delta_event(event)
+            if event_type == "response.output_text.delta":
+                store = _resolve_voice_store(session_identifier)
+                if store:
+                    transcript = store.get("transcript", transcript)
+                    if on_text_delta:
+                        on_text_delta(transcript)
+            processed_indices.append(index)
+        elif event_type == "response.completed":
+            completed_event = event
+            processed_indices.append(index)
+
+    if processed_indices:
+        for index in reversed(processed_indices):
+            queue.pop(index)
+
+    if completed_event:
+        response_payload = completed_event.get("response") or {}
+        entry = completed_event.get("_entry")
+        if entry is None:
+            entry = process_realtime_completed_event(completed_event)
+        if entry:
+            transcript = entry.get("content", transcript)
+        if session_identifier:
+            response_payload.setdefault("session", {})["id"] = session_identifier
+        if on_text_delta and transcript:
+            on_text_delta(transcript)
+        return response_payload, transcript.strip()
+
+    store = _resolve_voice_store(session_identifier)
+    if store:
+        transcript = store.get("transcript", transcript)
+        response_id = store.get("response_id")
+        response_payload = {"session": {"id": session_identifier}}
+        if response_id:
+            response_payload["id"] = response_id
+    return response_payload, transcript.strip()
+
+
 def render_conversation_history(model: str) -> bool:
-    history: List[Dict[str, str]] = st.session_state["conversation_history"].get(
+    history: List[Dict[str, Any]] = st.session_state["conversation_history"].get(
         model, []
     )
     if not history:
         return False
 
     for message in history:
+        if not isinstance(message, Mapping):
+            continue
         role = message.get("role", "assistant")
         content = message.get("content", "")
-        if not content:
-            continue
+        mode = message.get("mode", "text")
+        start_label = format_timestamp(message.get("start"))
+        end_label = format_timestamp(message.get("end"))
+        metadata_tokens: List[str] = []
+        if start_label:
+            metadata_tokens.append(f"start {start_label}")
+        if end_label:
+            metadata_tokens.append(f"end {end_label}")
+        session_id = message.get("session_id")
+        response_id = message.get("response_id")
+        audio_bytes = message.get("audio")
+        audio_key = message.get("audio_key")
+        if not audio_bytes and audio_key:
+            audio_bytes = st.session_state.get("voice_recordings", {}).get(audio_key)
         with st.chat_message("user" if role == "user" else "assistant"):
-            st.markdown(content)
+            if mode == "voice":
+                label = ":microphone: Voice message"
+                if metadata_tokens:
+                    label = f"{label} ({' • '.join(metadata_tokens)})"
+                st.markdown(f"**{label}**")
+                if content:
+                    st.markdown(content)
+                else:
+                    st.markdown("_Transcription pending…_")
+                if audio_bytes:
+                    st.audio(audio_bytes, format=message.get("audio_format", "audio/wav"))
+                meta_lines: List[str] = []
+                if session_id:
+                    meta_lines.append(f"Session `{session_id}`")
+                if response_id:
+                    meta_lines.append(f"Response `{response_id}`")
+                if meta_lines:
+                    st.caption(" • ".join(meta_lines))
+            else:
+                display_content = content if content else "_No content available._"
+                st.markdown(display_content)
 
     return True
 
 
 def extract_conversation_id(response: Dict[str, Any]) -> Optional[str]:
+    session = response.get("session")
+    if isinstance(session, dict):
+        session_id = session.get("id")
+        if isinstance(session_id, str) and session_id.strip():
+            return session_id.strip()
+
     conversation = response.get("conversation")
     if isinstance(conversation, dict):
         conversation_id = conversation.get("id")
@@ -662,6 +1093,12 @@ def main() -> None:
         st.session_state["conversation_history"] = {}
     if "active_model" not in st.session_state:
         st.session_state["active_model"] = None
+    if "active_voice_turns" not in st.session_state:
+        st.session_state["active_voice_turns"] = {}
+    if "voice_recordings" not in st.session_state:
+        st.session_state["voice_recordings"] = {}
+    if "realtime_event_queue" not in st.session_state:
+        st.session_state["realtime_event_queue"] = []
 
     # Update the `daw_options` list to support additional DAW versions in the future.
     daw_options = [
@@ -845,31 +1282,36 @@ def main() -> None:
         if continuing_conversation and isinstance(conversation_state, dict):
             existing_state = conversation_state
 
+        session_info = response.get("session")
+        session_identifier: Optional[str] = None
+        if isinstance(session_info, Mapping):
+            session_raw = session_info.get("id")
+            if isinstance(session_raw, str) and session_raw.strip():
+                session_identifier = session_raw.strip()
+        if not session_identifier and isinstance(existing_state, Mapping):
+            existing_session = existing_state.get("session_id")
+            if isinstance(existing_session, str) and existing_session.strip():
+                session_identifier = existing_session.strip()
         new_state: Dict[str, Any] = {
             "conversation_id": conversation_identifier
             or existing_state.get("conversation_id"),
-            "previous_response_id": response.get("id"),
+            "previous_response_id": response.get("id")
+            or existing_state.get("previous_response_id"),
             "route": route,
             "token": metadata_token or existing_state.get("token"),
             "language": metadata_language or existing_state.get("language"),
             "daw": metadata_daw or existing_state.get("daw"),
+            "session_id": session_identifier,
         }
         st.session_state["conversations"][target_model] = new_state
 
-        model_history = st.session_state["conversation_history"].setdefault(
-            target_model, []
+        append_text_history_message(target_model, "user", user_prompt)
+        assistant_content = (
+            sanitized_output
+            if sanitized_output
+            else "_No output text was returned._"
         )
-        model_history.extend(
-            [
-                {"role": "user", "content": user_prompt},
-                {
-                    "role": "assistant",
-                    "content": sanitized_output
-                    if sanitized_output
-                    else "_No output text was returned._",
-                },
-            ]
-        )
+        append_text_history_message(target_model, "assistant", assistant_content)
 
         with response_container:
             with st.expander("Show raw response"):
