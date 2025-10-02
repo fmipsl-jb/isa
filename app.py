@@ -30,6 +30,12 @@ from streamlit_webrtc import (
     webrtc_streamer,
 )
 
+try:
+    from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+except (ImportError, ModuleNotFoundError):  # pragma: no cover - fallback for older Streamlit
+    add_script_run_ctx = None  # type: ignore[assignment]
+    get_script_run_ctx = None  # type: ignore[assignment]
+
 
 DEFAULT_MODELS = [
     "gpt-4.1-nano",
@@ -468,6 +474,16 @@ def ensure_voice_stream(
         args=(stream_response, playback_queue),
         daemon=True,
     )
+    if add_script_run_ctx is not None and get_script_run_ctx is not None:
+        try:
+            ctx = get_script_run_ctx()
+        except RuntimeError:
+            ctx = None
+        if ctx is not None:
+            try:
+                add_script_run_ctx(listener_thread, ctx=ctx)
+            except RuntimeError:
+                pass
     listener_thread.start()
     st.session_state["voice_listener_thread"] = listener_thread
 
