@@ -411,6 +411,7 @@ def create_silent_frame(sample_count: int, sample_rate: int) -> av.AudioFrame:
 def _consume_remote_audio(
     stream_response: Any,
     playback_queue: "queue.Queue[av.AudioFrame]",
+    error_queue: "queue.Queue[str]",
 ) -> None:
     try:
         for event in stream_response:
@@ -424,16 +425,22 @@ def _consume_remote_audio(
                 break
             elif event_type == "response.error":
                 error_obj = getattr(event, "error", None)
-                st.session_state["voice_session_error"] = (
-                    error_obj.get("message")
-                    if isinstance(error_obj, Mapping)
-                    else str(error_obj)
-                    if error_obj
-                    else "Unexpected realtime error"
-                )
+                message: str
+                if isinstance(error_obj, Mapping):
+                    message_candidate = error_obj.get("message")
+                    message = (
+                        message_candidate
+                        if isinstance(message_candidate, str)
+                        else "Unexpected realtime error"
+                    )
+                elif error_obj:
+                    message = str(error_obj)
+                else:
+                    message = "Unexpected realtime error"
+                error_queue.put(message)
                 break
     except Exception as error:  # pylint: disable=broad-except
-        st.session_state["voice_session_error"] = str(error)
+        error_queue.put(str(error))
 
 
 def ensure_voice_stream(
@@ -469,9 +476,14 @@ def ensure_voice_stream(
         playback_queue = queue.Queue()
         st.session_state["voice_remote_queue"] = playback_queue
 
+    error_queue = st.session_state.get("voice_remote_error_queue")
+    if not isinstance(error_queue, queue.Queue):
+        error_queue = queue.Queue()
+        st.session_state["voice_remote_error_queue"] = error_queue
+
     listener_thread = threading.Thread(
         target=_consume_remote_audio,
-        args=(stream_response, playback_queue),
+        args=(stream_response, playback_queue, error_queue),
         daemon=True,
     )
     if add_script_run_ctx is not None and get_script_run_ctx is not None:
@@ -500,6 +512,7 @@ def stop_voice_stream() -> None:
 
     st.session_state.pop("voice_stream_response", None)
     st.session_state.pop("voice_remote_queue", None)
+    st.session_state.pop("voice_remote_error_queue", None)
     st.session_state.pop("voice_listener_thread", None)
     st.session_state.pop("voice_session_client", None)
     st.session_state["voice_session_started"] = False
@@ -530,6 +543,12 @@ class VoiceAudioProcessor(AudioProcessorBase):
         else:
             self._playback_queue = queue.Queue()
             st.session_state["voice_remote_queue"] = self._playback_queue
+        error_queue = st.session_state.get("voice_remote_error_queue")
+        if isinstance(error_queue, queue.Queue):
+            self._error_queue: "queue.Queue[str]" = error_queue
+        else:
+            self._error_queue = queue.Queue()
+            st.session_state["voice_remote_error_queue"] = self._error_queue
         self._sample_rate = 16000
         self._audio_resampler: Optional[AudioResampler] = None
 
@@ -589,7 +608,54 @@ class VoiceAudioProcessor(AudioProcessorBase):
         output_frame.sample_rate = sample_rate
         return output_frame
 
-    def recv_audio(self, frame: av.AudioFrame) -> av.AudioFrame:  # type: ignore[override]
+    def _drain_error_queue(self) -> Optional[str]:
+        message: Optional[str] = None
+        try:
+            while True:
+                message = self._error_queue.get_nowait()
+        except queue.Empty:
+            pass
+        return message
+
+    def _handle_error_state(self, sample_count: int) -> Optional[av.AudioFrame]:
+        message = self._drain_error_queue()
+        if message:
+            st.session_state["voice_session_error"] = message
+            stop_voice_stream()
+            self._stream_response = None
+            return create_silent_frame(sample_count, self._sample_rate)
+        if st.session_state.get("voice_session_error"):
+            if self._stream_response is not None:
+                stop_voice_stream()
+                self._stream_response = None
+            return create_silent_frame(sample_count, self._sample_rate)
+        return None
+
+    def _ensure_client(self) -> Optional[OpenAI]:
+        if self._client is not None:
+            return self._client
+        candidate = st.session_state.get("voice_session_client")
+        if isinstance(candidate, OpenAI):
+            self._client = candidate
+            return self._client
+        try:
+            self._client = build_client()
+        except RuntimeError:
+            self._client = None
+        return self._client
+
+    def _ensure_stream(self) -> Optional[Any]:
+        if self._stream_response is not None:
+            return self._stream_response
+        if self._metadata is None:
+            return None
+        client = self._ensure_client()
+        if client is None:
+            return None
+        self._stream_response = ensure_voice_stream(client, self._metadata)
+        return self._stream_response
+
+    def _process_audio_frame(self, frame: av.AudioFrame) -> av.AudioFrame:
         sample_count = getattr(frame, "samples", None)
         if sample_count is None:
             sample_count = frame.to_ndarray().shape[-1]
@@ -599,20 +665,36 @@ class VoiceAudioProcessor(AudioProcessorBase):
             sample_count = frame.to_ndarray().shape[-1]
         self._sample_rate = getattr(frame, "sample_rate", None) or self._sample_rate
 
-        if self._stream_response is not None:
-            try:
-                audio_buffer = getattr(self._stream_response, "input_audio_buffer", None)
-                if audio_buffer is not None:
-                    audio_buffer.append(self._frame_to_pcm(frame))
-                    commit = getattr(audio_buffer, "commit", None)
-                    if callable(commit):
-                        commit()
-                response_controller = getattr(self._stream_response, "response", None)
-                create_fn = getattr(response_controller, "create", None)
-                if callable(create_fn):
-                    create_fn()
-            except Exception as error:  # pylint: disable=broad-except
-                st.session_state["voice_session_error"] = str(error)
+        error_frame = self._handle_error_state(sample_count)
+        if error_frame is not None:
+            return error_frame
+
+        if self._metadata is None:
+            return create_silent_frame(sample_count, self._sample_rate)
+
+        stream_response = self._ensure_stream()
+        if stream_response is None:
+            error_frame = self._handle_error_state(sample_count)
+            if error_frame is not None:
+                return error_frame
+            return create_silent_frame(sample_count, self._sample_rate)
+
+        audio_buffer = getattr(stream_response, "input_audio_buffer", None)
+        try:
+            if audio_buffer is not None:
+                audio_buffer.append(self._frame_to_pcm(frame))
+                commit = getattr(audio_buffer, "commit", None)
+                if callable(commit):
+                    commit()
+            response_controller = getattr(stream_response, "response", None)
+            create_fn = getattr(response_controller, "create", None)
+            if callable(create_fn):
+                create_fn()
+        except Exception as error:  # pylint: disable=broad-except
+            st.session_state["voice_session_error"] = str(error)
+            stop_voice_stream()
+            self._stream_response = None
+            return create_silent_frame(sample_count, self._sample_rate)
 
         try:
             playback_frame = self._playback_queue.get_nowait()
@@ -621,6 +703,17 @@ class VoiceAudioProcessor(AudioProcessorBase):
             )
         except queue.Empty:
             return create_silent_frame(sample_count, self._sample_rate)
+
+    def recv_audio(self, frame: av.AudioFrame) -> av.AudioFrame:  # type: ignore[override]
+        return self._process_audio_frame(frame)
+
+    def recv_queued(  # type: ignore[override]
+        self, frames: "List[av.AudioFrame]"
+    ) -> av.AudioFrame:
+        """Process queued frames when async audio processing is enabled."""
+        if not frames:
+            return create_silent_frame(int(self._sample_rate / 10), self._sample_rate)
+        return self._process_audio_frame(frames[-1])
 
 
 def build_input_messages(
@@ -1641,7 +1734,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="Studio Pro Assistant", layout="wide")
     st.title("Studio Pro Assistant")
-    st.caption("version 4.0.3 (251002)")
+    st.caption("version 4.0.4 (251002)")
 
     developer_mode = is_developer_mode_enabled()
     realtime_config = get_realtime_config()
@@ -1872,6 +1965,7 @@ def main() -> None:
             rtc_configuration=rtc_configuration,
             media_stream_constraints={"audio": True, "video": False},
             audio_processor_factory=VoiceAudioProcessor,
+            async_processing=True,
         )
         st.session_state["voice_session_client"] = client
         if not webrtc_ctx.state.playing:
