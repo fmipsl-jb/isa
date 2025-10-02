@@ -40,6 +40,8 @@ class RunConfig:
     previous_response_id: Optional[str] = None
     prompt_reference: Optional[Dict[str, Any]] = None
     cache_key: Optional[str] = None
+    voice_session_id: Optional[str] = None
+    mode: Optional[str] = None
 
 
 @dataclass
@@ -658,6 +660,8 @@ def main() -> None:
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
+    if "voice_session" not in st.session_state:
+        st.session_state["voice_session"] = None
     if "conversation_history" not in st.session_state:
         st.session_state["conversation_history"] = {}
     if "active_model" not in st.session_state:
