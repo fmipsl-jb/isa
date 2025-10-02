@@ -1568,6 +1568,7 @@ def main() -> None:
         st.session_state["conversation_history"] = {}
     if "active_model" not in st.session_state:
         st.session_state["active_model"] = None
+
     if "active_voice_turns" not in st.session_state:
         st.session_state["active_voice_turns"] = {}
     if "voice_recordings" not in st.session_state:
