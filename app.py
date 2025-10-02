@@ -1,4 +1,4 @@
-"""Studio Pro Assistant"""
+"""Studio One Assistant"""
 
 from __future__ import annotations
 
@@ -652,9 +652,9 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Studio Pro Assistant", layout="wide")
-    st.title("Studio Pro Assistant")
-    st.caption("version 3.1.1 (251001)")
+    st.set_page_config(page_title="Studio One Assistant", layout="wide")
+    st.title("Studio One Assistant")
+    st.caption("version 3.1.2 (251002)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -665,7 +665,7 @@ def main() -> None:
 
     # Update the `daw_options` list to support additional DAW versions in the future.
     daw_options = [
-        "PreSonus Studio Pro 7",
+        "PreSonus Studio One 7",
     ]
     default_daw = st.session_state.get("selected_daw_version")
     active_model = st.session_state.get("active_model")
