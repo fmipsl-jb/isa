@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import av
+from av.audio.resampler import AudioResampler
 import numpy as np
 import streamlit as st
 from openai import APIConnectionError, APIError, OpenAI
@@ -477,6 +478,7 @@ class VoiceAudioProcessor(AudioProcessorBase):
             self._playback_queue = queue.Queue()
             st.session_state["voice_remote_queue"] = self._playback_queue
         self._sample_rate = 16000
+        self._audio_resampler: Optional[AudioResampler] = None
 
         if self._metadata is not None:
             self._client = st.session_state.get("voice_session_client")
@@ -498,22 +500,72 @@ class VoiceAudioProcessor(AudioProcessorBase):
         pcm = np.asarray(samples, dtype=np.int16)
         return pcm.tobytes()
 
+    def _prepare_playback_frame(
+        self, frame: av.AudioFrame, sample_count: int, sample_rate: int
+    ) -> av.AudioFrame:
+        if sample_count <= 0:
+            sample_count = max(int(sample_rate / 100), 1)
+        frame_sample_rate = getattr(frame, "sample_rate", sample_rate) or sample_rate
+
+        if frame_sample_rate != sample_rate:
+            if (
+                self._audio_resampler is None
+                or getattr(self._audio_resampler, "rate", None) != sample_rate
+            ):
+                self._audio_resampler = AudioResampler(
+                    format="s16", layout="mono", rate=sample_rate
+                )
+            try:
+                resampled_frames = self._audio_resampler.resample(frame)
+            except Exception:  # pylint: disable=broad-except
+                resampled_frames = []
+            if resampled_frames:
+                frame = resampled_frames[0]
+        samples = frame.to_ndarray()
+        if samples.ndim > 1:
+            samples = samples.mean(axis=0)
+        pcm = np.asarray(samples, dtype=np.int16).reshape(-1)
+
+        current_samples = pcm.shape[0]
+        if current_samples > sample_count:
+            pcm = pcm[:sample_count]
+        elif current_samples < sample_count:
+            pcm = np.pad(pcm, (0, sample_count - current_samples), mode="constant")
+
+        output_frame = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="s16", layout="mono")
+        output_frame.sample_rate = sample_rate
+        return output_frame
+
     def recv_audio(self, frame: av.AudioFrame) -> av.AudioFrame:  # type: ignore[override]
         sample_count = getattr(frame, "samples", None)
         if sample_count is None:
+            sample_count = frame.to_ndarray().shape[-1]
+        try:
+            sample_count = int(sample_count)
+        except (TypeError, ValueError):
             sample_count = frame.to_ndarray().shape[-1]
         self._sample_rate = getattr(frame, "sample_rate", None) or self._sample_rate
 
         if self._stream_response is not None:
             try:
-                self._stream_response.input_audio_buffer.append(
-                    self._frame_to_pcm(frame)
-                )
+                audio_buffer = getattr(self._stream_response, "input_audio_buffer", None)
+                if audio_buffer is not None:
+                    audio_buffer.append(self._frame_to_pcm(frame))
+                    commit = getattr(audio_buffer, "commit", None)
+                    if callable(commit):
+                        commit()
+                response_controller = getattr(self._stream_response, "response", None)
+                create_fn = getattr(response_controller, "create", None)
+                if callable(create_fn):
+                    create_fn()
             except Exception as error:  # pylint: disable=broad-except
                 st.session_state["voice_session_error"] = str(error)
 
         try:
-            return self._playback_queue.get_nowait()
+            playback_frame = self._playback_queue.get_nowait()
+            return self._prepare_playback_frame(
+                playback_frame, sample_count, self._sample_rate
+            )
         except queue.Empty:
             return create_silent_frame(sample_count, self._sample_rate)
 
@@ -1354,8 +1406,13 @@ def attach_realtime_event_listeners(data_channel: Any) -> None:
             entry = process_realtime_completed_event(payload)
             if entry is not None:
                 payload["_entry"] = entry
-        else:
+        elif event_type in {
+            "response.output_text.delta",
+            "response.output_audio.delta",
+            "response.created",
+        }:
             process_realtime_delta_event(payload)
+            payload["_processed_delta"] = True
 
     try:
         data_channel.on("message", _handle_message)
@@ -1397,7 +1454,9 @@ def run_voice_session(
             "response.output_audio.delta",
             "response.created",
         }:
-            process_realtime_delta_event(event)
+            if not event.get("_processed_delta"):
+                process_realtime_delta_event(event)
+                event["_processed_delta"] = True
             if event_type == "response.output_text.delta":
                 store = _resolve_voice_store(session_identifier)
                 if store:
