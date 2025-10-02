@@ -271,41 +271,60 @@ def _extract_client_secret(session_payload: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+def _ensure_mapping(payload: Any) -> Mapping[str, Any]:
+    """Best-effort conversion of SDK objects into dictionaries."""
+
+    if isinstance(payload, Mapping):
+        return payload
+
+    for attr in ("model_dump", "dict", "to_dict"):
+        extractor = getattr(payload, attr, None)
+        if callable(extractor):
+            result = extractor()
+            if isinstance(result, Mapping):
+                return result
+
+    return {}
+
+
 def create_voice_session(
     client: OpenAI,
     *,
     model: str = "gpt-4o-realtime-preview",
     voice: str = "verse",
 ) -> VoiceSessionMetadata:
-    payload = {
-        "model": model,
-        "voice": voice,
-        "modalities": ["text", "audio"],
-        "input_audio_format": "pcm16",
-        "output_audio_format": "pcm16",
-    }
-
-    session_response = client.post(
-        "/realtime/sessions",
-        json=payload,
-        cast_to=dict,
+    session_response = client.realtime.sessions.create(
+        model=model,
+        voice=voice,
+        modalities=["text", "audio"],
+        input_audio_format="pcm16",
+        output_audio_format="pcm16",
     )
 
-    if not isinstance(session_response, Mapping):
+    session_payload = _ensure_mapping(session_response)
+    if not session_payload:
         raise RuntimeError("Realtime session request did not return metadata.")
 
-    client_secret = _extract_client_secret(session_response)
+    client_secret = _extract_client_secret(session_payload)
+    if not client_secret:
+        webrtc_payload = _ensure_mapping(session_payload.get("webrtc"))
+        client_secret = _extract_client_secret(webrtc_payload)
     if not client_secret:
         raise RuntimeError("Realtime session did not include a client secret.")
 
-    ice_servers_raw = session_response.get("ice_servers")
+    ice_servers_raw = session_payload.get("ice_servers")
     ice_servers: Sequence[Mapping[str, Any]]
     if isinstance(ice_servers_raw, Sequence):
         ice_servers = [entry for entry in ice_servers_raw if isinstance(entry, Mapping)]
     else:
-        ice_servers = []
+        webrtc_payload = _ensure_mapping(session_payload.get("webrtc"))
+        alt_ice_servers = webrtc_payload.get("ice_servers") or webrtc_payload.get("iceServers")
+        if isinstance(alt_ice_servers, Sequence):
+            ice_servers = [entry for entry in alt_ice_servers if isinstance(entry, Mapping)]
+        else:
+            ice_servers = []
 
-    session_identifier = session_response.get("id")
+    session_identifier = session_payload.get("id")
     if not isinstance(session_identifier, str) or not session_identifier.strip():
         raise RuntimeError("Realtime session did not provide an identifier.")
 
@@ -313,9 +332,9 @@ def create_voice_session(
         session_id=session_identifier.strip(),
         client_secret=client_secret,
         ice_servers=ice_servers,
-        model=str(session_response.get("model") or model),
-        voice=str(session_response.get("voice") or voice),
-        expires_at=session_response.get("expires_at"),
+        model=str(session_payload.get("model") or model),
+        voice=str(session_payload.get("voice") or voice),
+        expires_at=session_payload.get("expires_at"),
     )
 
 
@@ -1747,6 +1766,9 @@ def main() -> None:
 
     developer_prompt = load_developer_prompt() or None
 
+    if "voice_session_toggle" not in st.session_state:
+        st.session_state["voice_session_toggle"] = False
+
     st.markdown("### Voice session")
     voice_toggle = st.toggle(
         "Voice session",
@@ -1775,7 +1797,6 @@ def main() -> None:
         except Exception as error:  # pylint: disable=broad-except
             st.session_state["voice_session_error"] = str(error)
             st.error(f"Failed to prepare the voice session: {error}")
-            st.session_state["voice_session_toggle"] = False
             voice_toggle = False
         else:
             st.session_state["voice_session_metadata"] = metadata
