@@ -654,7 +654,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="Studio One Assistant", layout="wide")
     st.title("Studio One Assistant")
-    st.caption("version 3.1.3 (251002)")
+    st.caption("version 3.1.4 (251006)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -803,6 +803,7 @@ def main() -> None:
         st.session_state["active_model"] = target_model
 
         with response_container:
+            st.subheader(f"Response ({target_model})")
             render_conversation_history(target_model)
 
             with st.chat_message("user"):
@@ -877,6 +878,7 @@ def main() -> None:
         active_model = st.session_state.get("active_model")
         with response_container:
             if active_model:
+                st.subheader(f"Response ({active_model})")
                 has_history = render_conversation_history(active_model)
                 if not has_history:
                     st.info("No conversation yet. Ask a question to get started.")
