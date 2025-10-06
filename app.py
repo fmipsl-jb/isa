@@ -1770,7 +1770,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="Studio Pro Assistant", layout="wide")
     st.title("Studio Pro Assistant")
-    st.caption("version 4.0.4 (251002)")
+    st.caption("version 4.0.5 (251006)")
 
     developer_mode = is_developer_mode_enabled()
     realtime_config = get_realtime_config()
