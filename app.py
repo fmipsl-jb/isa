@@ -413,11 +413,47 @@ def _consume_remote_audio(
     playback_queue: "queue.Queue[av.AudioFrame]",
     error_queue: "queue.Queue[str]",
 ) -> None:
+    queue = st.session_state.setdefault("realtime_event_queue", [])
+
+    def _event_to_mapping(candidate: Any) -> Mapping[str, Any]:
+        if isinstance(candidate, Mapping):
+            return candidate
+        for attr in ("model_dump", "dict", "to_dict"):
+            extractor = getattr(candidate, attr, None)
+            if callable(extractor):
+                try:
+                    mapping = extractor()
+                except Exception:  # pylint: disable=broad-except
+                    continue
+                if isinstance(mapping, Mapping):
+                    return mapping
+        event_type = getattr(candidate, "type", None)
+        return {"type": event_type} if event_type else {}
+
     try:
         for event in stream_response:
             event_type = getattr(event, "type", "")
+            event_payload = _event_to_mapping(event)
+
+            if event_type in {
+                "response.output_text.delta",
+                "response.output_audio.delta",
+                "response.created",
+                "response.completed",
+            }:
+                queue.append(event_payload)
+                if event_type == "response.completed":
+                    entry = process_realtime_completed_event(event_payload)
+                    if entry is not None:
+                        event_payload["_entry"] = entry
+                else:
+                    process_realtime_delta_event(event_payload)
+                    event_payload["_processed_delta"] = True
+
             if event_type == "response.output_audio.delta":
                 delta = getattr(event, "delta", None)
+                if not delta and isinstance(event_payload, Mapping):
+                    delta = event_payload.get("delta")
                 frame = decode_audio_delta(delta)
                 if frame is not None:
                     playback_queue.put(frame)
