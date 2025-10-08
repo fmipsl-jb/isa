@@ -489,6 +489,7 @@ def classify_user_prompt(client: OpenAI, user_prompt: str) -> Optional[Classifie
         "store": True,
         "prompt_cache_key": cache_key,
         "temperature": 0.0,
+        "metadata": {"token": "classifier"},
     }
 
     try:
