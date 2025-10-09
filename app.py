@@ -489,6 +489,7 @@ def classify_user_prompt(client: OpenAI, user_prompt: str) -> Optional[Classifie
         "store": True,
         "prompt_cache_key": cache_key,
         "temperature": 0.0,
+        "metadata": {"token": "classifier"},
     }
 
     try:
@@ -654,7 +655,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="Studio One Assistant", layout="wide")
     st.title("Studio One Assistant")
-    st.caption("version 3.1.4 (251006)")
+    st.caption("version 3.1.5 (251008)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
