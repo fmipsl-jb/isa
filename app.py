@@ -333,6 +333,7 @@ def run_model(
                     "allowed_domains": [
                         "support.presonus.com",
                         "www.presonus.com",
+                        "s1manual.presonus.com"
                     ]
                 },
             }
@@ -655,7 +656,7 @@ def extract_output_text(response: Dict[str, Any]) -> str:
 def main() -> None:
     st.set_page_config(page_title="Studio One Assistant", layout="wide")
     st.title("Studio One Assistant")
-    st.caption("version 3.1.5 (251008)")
+    st.caption("version 3.1.6 (251010)")
 
     if "conversations" not in st.session_state:
         st.session_state["conversations"] = {}
@@ -872,9 +873,9 @@ def main() -> None:
             ]
         )
 
-        with response_container:
-            with st.expander("Show raw response"):
-                st.json(response)
+        ##with response_container:
+            ##with st.expander("Show raw response"):
+               ## st.json(response)
     else:
         active_model = st.session_state.get("active_model")
         with response_container:
